@@ -90,10 +90,7 @@ DEFAULT_DATA = {
 		"Accumulator":       {"base_price": 12000000000,  "craft_time": 20400, "recipe": {"Osmium Bar":20,"Advanced Battery":3},"unlocked":False},
 		"Nuclear Capsule":   {"base_price": 26000000000,  "craft_time": 21000, "recipe": {"Rhodium Bar":5,"Plasma Torch":1},"unlocked":False},
 		"Wind Turbine":      {"base_price": 140000000000, "craft_time": 21600, "recipe": {"Aluminum Bar":300,"Motor":1},"unlocked":False}
-   },
-
-
-# Projects
+    },
     "projects": {
         "Management":                  {"Recipe": {"Copper":400,    "Iron":50},         "Prereq": "", "unlocked": True},
         "Asteroid Miner":              {"Recipe": {"Copper":400,    "Iron":10},         "Prereq": "", "unlocked": True},
@@ -171,8 +168,12 @@ DEFAULT_DATA = {
 #        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
 #        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
     },
+    "planets": {
+        1: {"Name": "Balor", "BasePrice": 100, "Telescope": 0, "Resources": {"Copper": 100}, "Distance": 10, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        2: {"Name": "Drasta", "BasePrice": 200, "Telescope": 0, "Resources": {"Copper": 80, "Iron": 20}, "Distance": 12, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+    }
 }
-
+BASE_MINING_RATE = 0.25
 # ── persistence helpers ───────────────────────────────────────────────────────
 
 def load_data() -> dict:
@@ -203,6 +204,12 @@ def load_data() -> dict:
             project["unlocked"] = False
         if "Researched" not in project.keys():
             project["Researched"] = False
+    for p in tempData["planets"]:
+        planet = tempData["planets"][p]
+        if "colony" not in planet.keys():
+            planet["colony"] = [1,1,1]
+        if "probes" not in planet.keys():
+            planet["probes"] = [1,1,1]
             
     return tempData
 
@@ -245,26 +252,39 @@ def effective_time(name: str, data: dict) -> float:
         return data["items"][name]["craft_time"]
     return 0.0
 
-def ore_time_of_recipe(name: str, category: str,data: dict) -> float:
-    total = 0
+def total_smelt_time_of_recipe(name: str, category: str, data: dict) -> float:
+    """Recursive sum of all alloy smelt_times needed for this recipe (raw seconds)."""
     entry = data[category][name]
-    if category == "alloys":
-        total += entry["smelt_time"]
-    elif category == "items":
-        total += entry["craft_time"]
-    
-    for ingredient, qty in entry["recipe"].items():
+    total = entry["smelt_time"] if category == "alloys" else 0.0
+    for ingredient, qty in entry.get("recipe", {}).items():
         if ingredient in data["alloys"]:
-            sub_ore = ore_time_of_recipe(ingredient, "alloys", data)
-            total += sub_ore * qty
-        # Is it an item?
+            total += total_smelt_time_of_recipe(ingredient, "alloys", data) * qty
         elif ingredient in data["items"]:
-            sub_ore = ore_time_of_recipe(ingredient, "items", data)
-            total += sub_ore * qty
-        else:
-            # it's an ore
-            pass
+            total += total_smelt_time_of_recipe(ingredient, "items", data) * qty
     return total
+
+
+def total_craft_time_of_recipe(name: str, category: str, data: dict) -> float:
+    """Recursive sum of all item craft_times needed for this recipe (raw seconds)."""
+    entry = data[category][name]
+    total = entry["craft_time"] if category == "items" else 0.0
+    for ingredient, qty in entry.get("recipe", {}).items():
+        if ingredient in data["alloys"]:
+            total += total_craft_time_of_recipe(ingredient, "alloys", data) * qty
+        elif ingredient in data["items"]:
+            total += total_craft_time_of_recipe(ingredient, "items", data) * qty
+    return total
+
+
+def total_wall_time(smelt_raw: float, craft_raw: float,
+                    smelters: int, crafters: int) -> float:
+    """Wall-clock time: smelting and crafting run in parallel.
+    Each pool is divided by the number of machines.
+    Returns max of the two lanes (bottleneck), minimum 1 to avoid /0.
+    """
+    smelt_wall = smelt_raw / max(1, smelters)
+    craft_wall = craft_raw / max(1, crafters)
+    return max(smelt_wall, craft_wall, 1.0)
 	
 def ore_cost_of_recipe(recipe: dict, data: dict) -> float:
     """Recursively expand a recipe all the way down to raw ore value."""
@@ -305,6 +325,22 @@ def project_cost(recipe: dict, data: dict) -> float:
     return total
 
 
+def project_time(recipe: dict, data: dict,
+                 smelters: int = 1, crafters: int = 1) -> float:
+    """Total wall-clock time to produce all ingredients of a project recipe."""
+    smelt_total = 0.0
+    craft_total = 0.0
+    for ingredient, qty in recipe.items():
+        if ingredient in data["alloys"]:
+            smelt_total += total_smelt_time_of_recipe(ingredient, "alloys", data) * qty
+            craft_total += total_craft_time_of_recipe(ingredient, "alloys", data) * qty
+        elif ingredient in data["items"]:
+            smelt_total += total_smelt_time_of_recipe(ingredient, "items", data) * qty
+            craft_total += total_craft_time_of_recipe(ingredient, "items", data) * qty
+        # ores: no production time
+    return total_wall_time(smelt_total, craft_total, smelters, crafters)
+
+
 def project_prereq_met(prereqs, data: dict) -> bool:
     """
     prereqs can be:
@@ -320,28 +356,30 @@ def project_prereq_met(prereqs, data: dict) -> bool:
     return projects.get(prereqs, {}).get("Researched", False)
 
 
-def analyze_recipe(name: str, category: str, data: dict) -> dict:
+def analyze_recipe(name: str, category: str, data: dict,
+                   smelters: int = 1, crafters: int = 1) -> dict:
     """Return a dict of metrics for one recipe."""
     entry    = data[category][name]
     recipe   = entry["recipe"]
     out_val  = effective_price(name, data)
     time_key = "smelt_time" if category == "alloys" else "craft_time"
     t        = entry.get(time_key, 1)
-    ore_time = ore_time_of_recipe(name, category, data)
+
+    smelt_raw  = total_smelt_time_of_recipe(name, category, data)
+    craft_raw  = total_craft_time_of_recipe(name, category, data)
+    wall_time  = total_wall_time(smelt_raw, craft_raw, smelters, crafters)
 
     direct_cost = direct_input_cost(recipe, data)
     ore_cost    = ore_cost_of_recipe(recipe, data)
 
     profit_vs_direct = out_val - direct_cost
     profit_vs_ore    = out_val - ore_cost
-    ratio_vs_direct  = (out_val / direct_cost) if direct_cost > 0 else 0
-    ratio_vs_ore     = (out_val / ore_cost)     if ore_cost    > 0 else 0
 
-    vps_out          = out_val    / t
-    vps_vs_direct    = profit_vs_direct / t
-    vps_vs_ore       = profit_vs_ore    / ore_time
-    
-    unlocked = True if entry["unlocked"] else False
+    vps_out       = out_val          / t
+    vps_vs_direct = profit_vs_direct / t
+    vps_vs_ore    = profit_vs_ore    / wall_time
+
+    unlocked = bool(entry["unlocked"])
 
     return {
         "unlocked":         unlocked,
@@ -352,23 +390,39 @@ def analyze_recipe(name: str, category: str, data: dict) -> dict:
         "ore_cost":         ore_cost,
         "profit_direct":    profit_vs_direct,
         "profit_ore":       profit_vs_ore,
-        "ratio_direct":     ratio_vs_direct,
-        "ratio_ore":        ratio_vs_ore,
         "craft_time":       t,
-        "ore_time":         ore_time,
+        "smelt_raw":        smelt_raw,
+        "craft_raw":        craft_raw,
+        "total_time":       wall_time,
         "vps_output":       vps_out,
         "vps_profit_direct":vps_vs_direct,
         "vps_profit_ore":   vps_vs_ore,
     }
 
 
-def analyze_all(data: dict) -> list:
+def analyze_all(data: dict, smelters: int = 1, crafters: int = 1) -> list:
     results = []
     for name in data["alloys"]:
-        results.append(analyze_recipe(name, "alloys", data))
+        results.append(analyze_recipe(name, "alloys", data, smelters, crafters))
     for name in data["items"]:
-        results.append(analyze_recipe(name, "items", data))
+        results.append(analyze_recipe(name, "items", data, smelters, crafters))
     return results
+    
+def mining_rate(level: int, bonus: float = 1) -> float:
+    l = level - 1
+    mining = bonus * (BASE_MINING_RATE + (0.1 * l) + (0.017 * (l ** 2)))
+    return mining
+    
+def ship_speed(level: int, bonus: float = 1) -> float:
+    l = level - 1
+    speed = bonus * (1 + (0.2 * l) + ((l ** 2) / 75))
+    return speed
+    
+def ship_cargo(level: int, bonus: float = 1) -> int:
+    l = level - 1
+    cargo = round(bonus * (5 + (2 * l) + (l ** 2)))
+    return cargo
+    
 
 # ── number formatting ─────────────────────────────────────────────────────────
 SUFFIXES = [
@@ -442,7 +496,8 @@ class SpreadsheetGrid(ttk.Frame):
 
     def __init__(self, master, columns, accent=ACCENT, on_change=None,
                  dropdown_cols=None, checkbox_cols=None,
-                 slider_cols=None, readonly_cols=None, **kw):
+                 slider_cols=None, readonly_cols=None,
+                 extra_widgets=None, **kw):
         """
         columns       : list of (header_label, width_px, anchor)
         on_change     : callable fired after any cell edit
@@ -459,6 +514,7 @@ class SpreadsheetGrid(ttk.Frame):
         self._checkbox_cols = set(checkbox_cols or [])
         self._slider_cols   = slider_cols   or {}
         self._readonly_cols = set(readonly_cols or [])
+        self._extra_widgets = extra_widgets or []
         self._data          = []
         self._sel           = None
         self._entry         = None
@@ -468,13 +524,11 @@ class SpreadsheetGrid(ttk.Frame):
 
     # ── build ─────────────────────────────────────────────────────────────────
     def _build(self):
-        # toolbar
+        # toolbar (extra_widgets injected by caller sit here)
         tb = ttk.Frame(self, style="Dark.TFrame")
         tb.pack(fill="x", pady=(0, 4))
-        ttk.Button(tb, text="+ Add Row",    style="Dark.TButton", command=self._add_row).pack(side="left", padx=2)
-        ttk.Button(tb, text="− Delete Row", style="Dark.TButton", command=self._del_row).pack(side="left", padx=2)
-        ttk.Button(tb, text="↑ Move Up",    style="Dark.TButton", command=self._move_up).pack(side="left", padx=2)
-        ttk.Button(tb, text="↓ Move Down",  style="Dark.TButton", command=self._move_down).pack(side="left", padx=2)
+        for w in (self._extra_widgets or []):
+            w(tb)   # callable receives the toolbar frame
         self._status = ttk.Label(tb, text="Click a cell to edit", style="Muted.TLabel")
         self._status.pack(side="right", padx=8)
 
@@ -849,20 +903,20 @@ class SpreadsheetGrid(ttk.Frame):
 # ─────────────────────────────────────────────────────────────────────────────
 
 COL_DEFS = [
-    ("Name",              "name",              180, "w"),
-    ("Type",              "category",          60,  "center"),
-    ("Output $",          "output_value",      120,  "e"),
-    ("Input Cost",        "direct_cost",       120,  "e"),
-    ("Ore Cost",          "ore_cost",          120,  "e"),
-    ("Profit/Input",      "profit_direct",     120,  "e"),
-    ("Profit/Ore",        "profit_ore",        120,  "e"),
-    #("×Input",            "ratio_direct",      120,  "center"),
-    #("×Ore",              "ratio_ore",         120,  "center"),
-    ("Time(s)",           "craft_time",        120,  "center"),
-    ("Time from Ore (s)", "ore_time",          120,  "center"),
-    ("$/s Output",        "vps_output",        120,  "e"),
-    ("$/s vs Input",      "vps_profit_direct", 120,  "e"),
-    ("$/s vs Ore",        "vps_profit_ore",    120,  "e"),
+    ("Name",           "name",              180, "w"),
+    ("Type",           "category",           60, "center"),
+    ("Output $",       "output_value",       120, "e"),
+    ("Input Cost",     "direct_cost",        120, "e"),
+    ("Ore Cost",       "ore_cost",           120, "e"),
+    ("Profit/Input",   "profit_direct",      120, "e"),
+    ("Profit/Ore",     "profit_ore",         120, "e"),
+    ("Time(s)",        "craft_time",          90, "center"),
+    ("Smelt Time",     "smelt_raw",           90, "center"),
+    ("Craft Time",     "craft_raw",           90, "center"),
+    ("Total Time",     "total_time",          90, "center"),
+    ("$/s Output",     "vps_output",         120, "e"),
+    ("$/s vs Input",   "vps_profit_direct",  120, "e"),
+    ("$/s vs Ore",     "vps_profit_ore",     120, "e"),
 ]
 
 
@@ -874,6 +928,8 @@ class App(tk.Tk):
         self.minsize(1200, 700)
         self.data = load_data()
 
+        self._smelters = tk.IntVar(value=1)
+        self._crafters = tk.IntVar(value=1)
         self._build_styles()
         self._build_ui()
         self._refresh_table()
@@ -1076,12 +1132,23 @@ class App(tk.Tk):
         def alloy_ingredients():
             return sorted(self.data["ores"].keys())
         dropdown_cols = {7: alloy_ingredients, 9: alloy_ingredients, 11: alloy_ingredients}
+        def _smelter_widget(tb):
+            ttk.Label(tb, text="Smelters:", style="Muted.TLabel").pack(side="left", padx=(4, 2))
+            ttk.Button(tb, text="−", style="Dark.TButton", width=2,
+                       command=lambda: (self._smelters.set(max(0, self._smelters.get()-1)),
+                                        self._refresh_table())).pack(side="left")
+            ttk.Label(tb, textvariable=self._smelters, style="Dark.TLabel",
+                      width=3, anchor="center").pack(side="left")
+            ttk.Button(tb, text="+", style="Dark.TButton", width=2,
+                       command=lambda: (self._smelters.set(self._smelters.get()+1),
+                                        self._refresh_table())).pack(side="left")
         grid = SpreadsheetGrid(frame, cols, accent=ACCENT2,
                                on_change=lambda: self._commit_alloys(grid),
                                dropdown_cols=dropdown_cols,
                                checkbox_cols={0},
                                slider_cols={5: (-2, 4)},
-                               readonly_cols={6})
+                               readonly_cols={6},
+                               extra_widgets=[_smelter_widget])
         grid.pack(fill="both", expand=True)
         for name, entry in self.data["alloys"].items():
             bp    = entry.get("base_price", 0)
@@ -1163,12 +1230,23 @@ class App(tk.Tk):
                           list(self.data["alloys"].keys()) +
                           list(self.data["items"].keys()))
         dropdown_cols = {7: item_ingredients, 9: item_ingredients, 11: item_ingredients}
+        def _crafter_widget(tb):
+            ttk.Label(tb, text="Crafters:", style="Muted.TLabel").pack(side="left", padx=(4, 2))
+            ttk.Button(tb, text="−", style="Dark.TButton", width=2,
+                       command=lambda: (self._crafters.set(max(0, self._crafters.get()-1)),
+                                        self._refresh_table())).pack(side="left")
+            ttk.Label(tb, textvariable=self._crafters, style="Dark.TLabel",
+                      width=3, anchor="center").pack(side="left")
+            ttk.Button(tb, text="+", style="Dark.TButton", width=2,
+                       command=lambda: (self._crafters.set(self._crafters.get()+1),
+                                        self._refresh_table())).pack(side="left")
         grid = SpreadsheetGrid(frame, cols, accent="#c0a0ff",
                                on_change=lambda: self._commit_items(grid),
                                dropdown_cols=dropdown_cols,
                                checkbox_cols={0},
                                slider_cols={5: (-2, 4)},
-                               readonly_cols={6})
+                               readonly_cols={6},
+                               extra_widgets=[_crafter_widget])
         grid.pack(fill="both", expand=True)
         for name, entry in self.data["items"].items():
             bp    = entry.get("base_price", 0)
@@ -1235,7 +1313,7 @@ class App(tk.Tk):
         tb.pack(fill="x", pady=(0, 6))
         ttk.Label(tb, text="Sort by:", style="Dark.TLabel").pack(side="left", padx=(0, 6))
         self._proj_sort_var = tk.StringVar(value="name")
-        for val, label in (("name", "Name"), ("cost", "Cost")):
+        for val, label in (("name", "Name"), ("cost", "Cost"), ("time", "Time")):
             ttk.Radiobutton(tb, text=label, variable=self._proj_sort_var, value=val,
                             command=self._refresh_projects,
                             style="Dark.TLabel").pack(side="left", padx=4)
@@ -1249,18 +1327,23 @@ class App(tk.Tk):
         proj_tree_frame = ttk.Frame(frame, style="Dark.TFrame")
         proj_tree_frame.pack(fill="both", expand=True)
 
-        proj_cols = ("researched", "name", "cost", "prereq", "recipe_display")
+        proj_cols = ("researched", "name", "cost", "time", "prereq", "recipe_display")
         self._proj_tree = ttk.Treeview(proj_tree_frame, columns=proj_cols,
                                        show="headings", selectmode="browse")
         self._proj_tree.heading("researched",     text="Done")
-        self._proj_tree.heading("name",           text="Project")
-        self._proj_tree.heading("cost",           text="Cost ($)")
+        self._proj_tree.heading("name",           text="Project",
+                                command=lambda: self._proj_sort("name"))
+        self._proj_tree.heading("cost",           text="Cost ($)",
+                                command=lambda: self._proj_sort("cost"))
+        self._proj_tree.heading("time",           text="Time",
+                                command=lambda: self._proj_sort("time"))
         self._proj_tree.heading("prereq",         text="Prereq")
         self._proj_tree.heading("recipe_display", text="Ingredients")
 
         self._proj_tree.column("researched",     width=55,  anchor="center", stretch=False)
         self._proj_tree.column("name",           width=220, anchor="w",      stretch=False)
         self._proj_tree.column("cost",           width=120, anchor="e",      stretch=False)
+        self._proj_tree.column("time",           width=100, anchor="e",      stretch=False)
         self._proj_tree.column("prereq",         width=200, anchor="w",      stretch=False)
         self._proj_tree.column("recipe_display", width=500, anchor="w",      stretch=True)
 
@@ -1301,6 +1384,10 @@ class App(tk.Tk):
             name, entry = item
             if sort_key == "cost":
                 return project_cost(entry.get("Recipe", {}), self.data)
+            if sort_key == "time":
+                return project_time(entry.get("Recipe", {}), self.data,
+                                   max(1, self._smelters.get()),
+                                   max(1, self._crafters.get()))
             return name.lower()
 
         rows = sorted(projects.items(), key=row_sort_key)
@@ -1325,6 +1412,10 @@ class App(tk.Tk):
 
             done_glyph = "☑" if researched else "☐"
             cost_str   = fmt(cost) if cost > 0 else "?"
+            t          = project_time(recipe, self.data,
+                                      max(1, self._smelters.get()),
+                                      max(1, self._crafters.get()))
+            time_str   = f"{int(t)}s" if t > 1 else "—"
 
             base_tag = "row_a" if i % 2 == 0 else "row_b"
             if researched:
@@ -1335,7 +1426,11 @@ class App(tk.Tk):
                 tags = (base_tag, "available")
 
             tree.insert("", "end", iid=name, tags=tags,
-                        values=(done_glyph, name, cost_str, prereq_str, recipe_str))
+                        values=(done_glyph, name, cost_str, time_str, prereq_str, recipe_str))
+
+    def _proj_sort(self, key: str):
+        self._proj_sort_var.set(key)
+        self._refresh_projects()
 
     def _proj_tree_click(self, event):
         """Toggle Researched when clicking the Done column."""
@@ -1358,7 +1453,9 @@ class App(tk.Tk):
 
     # ── table refresh ─────────────────────────────────────────────────────────
     def _refresh_table(self):
-        results = analyze_all(self.data)
+        results = analyze_all(self.data,
+                              smelters=max(1, self._smelters.get()),
+                              crafters=max(1, self._crafters.get()))
         flt     = self._filter_var.get()
         sort_k  = self._sort_var.get()
 
@@ -1375,10 +1472,10 @@ class App(tk.Tk):
         for row in self.tree.get_children():
             self.tree.delete(row)
 
+        time_cols  = {"craft_time", "smelt_raw", "craft_raw", "total_time"}
         money_cols = {"output_value", "direct_cost", "ore_cost",
                       "profit_direct", "profit_ore",
                       "vps_output", "vps_profit_direct", "vps_profit_ore"}
-        ratio_cols = {"ratio_direct", "ratio_ore"}
 
         for i, r in enumerate(results):
             values = []
@@ -1388,11 +1485,7 @@ class App(tk.Tk):
                     values.append("Alloy" if v == "alloys" else "Item")
                 elif key in money_cols:
                     values.append(fmt(v))
-                elif key in ratio_cols:
-                    values.append(f"{v:.2f}×")
-                elif key == "craft_time":
-                    values.append(f"{int(v)}s")
-                elif key == "ore_time":
+                elif key in time_cols:
                     values.append(f"{int(v)}s")
                 else:
                     values.append(v)
@@ -1440,6 +1533,8 @@ class App(tk.Tk):
                 # stars intentionally NOT reset
         for proj in self.data["projects"].values():
             proj["Researched"] = False
+        self._smelters.set(1)
+        self._crafters.set(1)
         save_data(self.data)
         messagebox.showinfo("Sell Galaxy",
                             "Galaxy sold!\nRestart the app to refresh all grids.")
