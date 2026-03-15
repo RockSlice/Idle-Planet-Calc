@@ -725,7 +725,7 @@ class SpreadsheetGrid(ttk.Frame):
     def __init__(self, master, columns, accent=ACCENT, on_change=None,
                  dropdown_cols=None, checkbox_cols=None,
                  slider_cols=None, readonly_cols=None,
-                 extra_widgets=None, **kw):
+                 star_cols=None, extra_widgets=None, **kw):
         """
         columns       : list of (header_label, width_px, anchor)
         on_change     : callable fired after any cell edit
@@ -742,6 +742,7 @@ class SpreadsheetGrid(ttk.Frame):
         self._checkbox_cols = set(checkbox_cols or [])
         self._slider_cols   = slider_cols   or {}
         self._readonly_cols = set(readonly_cols or [])
+        self._star_cols     = set(star_cols or [])
         self._extra_widgets = extra_widgets or []
         self._data          = []
         self._sel           = None
@@ -843,6 +844,23 @@ class SpreadsheetGrid(ttk.Frame):
                     c.create_text(x + w//2, y + H//2, text=glyph,
                                   anchor="center", fill=glyph_color,
                                   font=("Segoe UI", 13))
+                elif ci in self._star_cols:
+                    try:
+                        sv = int(float(str(val)))
+                    except (ValueError, TypeError):
+                        sv = 0
+                    # Draw + button on right
+                    btn_w = 15
+                    c.create_rectangle(x + w - btn_w, y + 5, x + w - 1, y + H - 5,
+                                       fill="#3a3a5a", outline="#555570")
+                    c.create_text(x + w - btn_w // 2, y + H // 2,
+                                  text="+", anchor="center",
+                                  fill=ACCENT2, font=("Segoe UI", 11, "bold"))
+                    # Draw ★N on left (blank if 0)
+                    if sv > 0:
+                        c.create_text(x + self.PAD_X, y + H // 2,
+                                      text=f"★{sv}", anchor="w",
+                                      fill=WARNING, font=REG_FONT)
                 elif ci in self._slider_cols:
                     # Draw chevron indicator for market slider
                     try:
@@ -897,6 +915,14 @@ class SpreadsheetGrid(ttk.Frame):
                     self._toggle_checkbox(ri, ci)
                 elif ci in self._readonly_cols:
                     pass  # not editable
+                elif ci in self._star_cols:
+                    # right 20px = + button; rest = open entry for manual edit
+                    col_x_start = sum(self._cols[i][1] for i in range(ci))
+                    col_w = self._cols[ci][1]
+                    if cx >= col_x_start + col_w - 20:
+                        self._increment_star(ri, ci)
+                    else:
+                        self._open_cell(ri, ci)
                 elif ci in self._slider_cols:
                     self._open_slider(ri, ci)
                 else:
@@ -911,6 +937,20 @@ class SpreadsheetGrid(ttk.Frame):
             self._data[ri].append("")
         cur = str(self._data[ri][ci]).lower() in ("true", "1", "yes")
         self._data[ri][ci] = "True" if not cur else "False"
+        self._sel = (ri, ci)
+        self._redraw()
+        self._on_change()
+
+    def _increment_star(self, ri, ci):
+        """Increment a star-count cell by 1 on click (no minimum limit displayed)."""
+        self._commit_entry()
+        while len(self._data[ri]) <= ci:
+            self._data[ri].append("")
+        try:
+            cur = int(float(str(self._data[ri][ci])))
+        except (ValueError, TypeError):
+            cur = 0
+        self._data[ri][ci] = str(cur + 1)
         self._sel = (ri, ci)
         self._redraw()
         self._on_change()
@@ -1313,8 +1353,9 @@ class App(tk.Tk):
         grid = SpreadsheetGrid(frame, cols, accent=ACCENT,
                                on_change=lambda: self._commit_ores(grid),
                                checkbox_cols={0},
+                               star_cols={3},
                                slider_cols={4: (-2, 4)},
-                               readonly_cols={0, 5, 6})  # 0=planet-driven, 5=realPrice, 6=ore/s
+                               readonly_cols={0, 5, 6})
         grid.pack(fill="both", expand=True)
         for name, entry in self.data["ores"].items():
             unlocked  = ore_unlocked_from_planets(name, self.data)
@@ -1460,6 +1501,7 @@ class App(tk.Tk):
                                on_change=lambda: self._commit_alloys(grid),
                                dropdown_cols=dropdown_cols,
                                checkbox_cols={0},
+                               star_cols={4},
                                slider_cols={5: (-2, 4)},
                                readonly_cols={3, 6},  # 3=adj smelt time, 6=real price
                                extra_widgets=[_smelter_widget])
@@ -1563,6 +1605,7 @@ class App(tk.Tk):
                                on_change=lambda: self._commit_items(grid),
                                dropdown_cols=dropdown_cols,
                                checkbox_cols={0},
+                               star_cols={4},
                                slider_cols={5: (-2, 4)},
                                readonly_cols={3, 6},  # 3=adj craft time, 6=real price
                                extra_widgets=[_crafter_widget])
@@ -1852,35 +1895,40 @@ class App(tk.Tk):
 
         pcols = ("num", "name", "telescope", "unlocked", "ores",
                  "mlvl", "mining", "slvl", "speed", "clvl", "cargo",
-                 "probe_m", "probe_s", "probe_c",
-                 "colony_m", "colony_s", "colony_c")
+                 "probe_sep", "probe_m", "probe_s", "probe_c",
+                 "colony_sep", "colony_m", "colony_s", "colony_c")
         self._planet_tree = ttk.Treeview(pf, columns=pcols,
                                          show="headings", selectmode="browse")
 
         _plw = self._prefs["col_widths"]["planets"]
         col_defs = [
-            ("num",      "#",          40, "center"),
-            ("name",     "Planet",    120, "w"),
-            ("telescope","Scope",      62, "center"),
-            ("unlocked", "Owned",      72, "center"),
-            ("ores",     "Ores",      220, "w"),
-            ("mlvl",     "M.Lvl",      81, "center"),
-            ("mining",   "Mining/s",   85, "e"),
-            ("slvl",     "S.Lvl",      81, "center"),
-            ("speed",    "Speed",      70, "e"),
-            ("clvl",     "C.Lvl",      81, "center"),
-            ("cargo",    "Cargo",      60, "e"),
-            ("probe_m",  "Prb Mng",    70, "e"),
-            ("probe_s",  "Prb Spd",    70, "e"),
-            ("probe_c",  "Prb Crg",    70, "e"),
-            ("colony_m", "Col Mng",    70, "e"),
-            ("colony_s", "Col Spd",    70, "e"),
-            ("colony_c", "Col Crg",    70, "e"),
+            ("num",       "#",        40, "center"),
+            ("name",      "Planet",  120, "w"),
+            ("telescope", "Scope",    62, "center"),
+            ("unlocked",  "Owned",    72, "center"),
+            ("ores",      "Ores",    220, "w"),
+            ("mlvl",      "M.Lvl",    81, "center"),
+            ("mining",    "Mining/s", 85, "e"),
+            ("slvl",      "S.Lvl",    81, "center"),
+            ("speed",     "Speed",    70, "e"),
+            ("clvl",      "C.Lvl",    81, "center"),
+            ("cargo",     "Cargo",    60, "e"),
+            ("probe_sep", "Probes:",   83, "center"),
+            ("probe_m",   "Mng",      50, "center"),
+            ("probe_s",   "Spd",      50, "center"),
+            ("probe_c",   "Crg",      50, "center"),
+            ("colony_sep","Colony:",   83, "center"),
+            ("colony_m",  "Mng",      50, "center"),
+            ("colony_s",  "Spd",      50, "center"),
+            ("colony_c",  "Crg",      50, "center"),
         ]
         for cid, label, width, anchor in col_defs:
             self._planet_tree.heading(cid, text=label)
             self._planet_tree.column(cid, width=_plw.get(cid, width),
                                      anchor=anchor, stretch=False)
+        # Separator columns are narrow and not resizable
+        for sep in ("probe_sep", "colony_sep"):
+            self._planet_tree.column(sep, minwidth=12, stretch=False)
 
         vsb = ttk.Scrollbar(pf, orient="vertical",   command=self._planet_tree.yview)
         hsb = ttk.Scrollbar(pf, orient="horizontal", command=self._planet_tree.xview)
@@ -1895,6 +1943,8 @@ class App(tk.Tk):
         self._planet_tree.tag_configure("row_b",    background=ROW_B)
         self._planet_tree.tag_configure("locked",   foreground="#555570")
         self._planet_tree.tag_configure("owned",    foreground=TEXT)
+        # Separator cols carry the group label in their heading text only
+        # (per-column heading background isn't supported by ttk.Treeview)
 
         # double-click to edit; single-click col 4 to toggle owned; save col widths on release
         self._planet_tree.bind("<Double-1>",        self._planet_tree_edit)
@@ -1957,8 +2007,8 @@ class App(tk.Tk):
                             lvl_str(mlvl), f"{mrate:.3f}" if owned else "—",
                             lvl_str(slvl), f"{speed:.2f}" if owned else "—",
                             lvl_str(clvl), cargo if owned else "—",
-                            probe[0], probe[1], probe[2],
-                            colony[0], colony[1], colony[2],
+                            "▌", probe[0], probe[1], probe[2],
+                            "▌", colony[0], colony[1], colony[2],
                         ))
 
     def _planet_tree_click(self, event):
@@ -2016,8 +2066,8 @@ class App(tk.Tk):
         # Map treeview column id (#N) to our column names
         col_names = ["num", "name", "telescope", "unlocked", "ores",
                      "mlvl", "mining", "slvl", "speed", "clvl", "cargo",
-                     "probe_m", "probe_s", "probe_c",
-                     "colony_m", "colony_s", "colony_c"]
+                     "probe_sep", "probe_m", "probe_s", "probe_c",
+                     "colony_sep", "colony_m", "colony_s", "colony_c"]
         try:
             col_idx = int(col[1:]) - 1
             col_name = col_names[col_idx]
@@ -2025,17 +2075,19 @@ class App(tk.Tk):
             return
 
         editable = {
-            "mlvl":     ("Levels", "Mining"),
-            "slvl":     ("Levels", "Speed"),
-            "clvl":     ("Levels", "Cargo"),
-            "probe_m":  ("probes",  0),
-            "probe_s":  ("probes",  1),
-            "probe_c":  ("probes",  2),
-            "colony_m": ("colony",  0),
-            "colony_s": ("colony",  1),
-            "colony_c": ("colony",  2),
+            "mlvl":      ("Levels", "Mining"),
+            "slvl":      ("Levels", "Speed"),
+            "clvl":      ("Levels", "Cargo"),
+            "probe_sep": None,
+            "probe_m":   ("probes",  0),
+            "probe_s":   ("probes",  1),
+            "probe_c":   ("probes",  2),
+            "colony_sep": None,
+            "colony_m":  ("colony",  0),
+            "colony_s":  ("colony",  1),
+            "colony_c":  ("colony",  2),
         }
-        if col_name not in editable:
+        if col_name not in editable or editable.get(col_name) is None:
             return
 
         num = int(item)
