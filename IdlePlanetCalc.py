@@ -28,7 +28,7 @@ DEFAULT_DATA = {
         "Silver":    {"base_price": 36, "unlocked":False},
         "Gold":      {"base_price": 75, "unlocked":False},
         "Diamond":   {"base_price": 160, "unlocked":False},
-        "Platium":   {"base_price": 340, "unlocked":False},
+        "Platinum":  {"base_price": 340, "unlocked":False},
         "Titanium":  {"base_price": 730, "unlocked":False},
         "Iridium":   {"base_price": 1600, "unlocked":False},
         "Palladium": {"base_price": 3500, "unlocked":False},
@@ -92,75 +92,75 @@ DEFAULT_DATA = {
 		"Wind Turbine":      {"base_price": 140000000000, "craft_time": 21600, "recipe": {"Aluminum Bar":300,"Motor":1},"unlocked":False}
     },
     "projects": {
-        "Management":                  {"Recipe": {"Copper":400,    "Iron":50},         "Prereq": "", "unlocked": True},
-        "Asteroid Miner":              {"Recipe": {"Copper":400,    "Iron":10},         "Prereq": "", "unlocked": True},
-        "Telescope 1":                 {"Recipe": {"Iron":1500,     "Copper Bar":5},    "Prereq": "", "unlocked": True},
-        "Telescope 2":                 {"Recipe": {"Lead Bar":10,   "Silicon":500},     "Prereq": "Telescope 1"},
-        "Telescope 3":                 {"Recipe": {"Iron Nail":10, "Silicon Bar":15},  "Prereq": "Telescope 2"},
-        "Telescope 4":                 {"Recipe": {"Hammer":5,      "Aluminum Bar":20}, "Prereq": "Telescope 3"},
-        "Telescope 5":                 {"Recipe": {"Circuit":3,     "Gold Bar":10},     "Prereq": "Telescope 4"},
-        "Telescope 6":                 {"Recipe": {"Laser":3,       "Bronze Bar":25},   "Prereq": "Telescope 5"},
-        "Telescope 7":                 {"Recipe": {"Solar Panel":3, "Platinum Bar":20}, "Prereq": "Telescope 6"},
-        "Telescope 8":                 {"Recipe": {"Laser Torch":3, "Titanium Bar":10}, "Prereq": "Telescope 7"},
-        "Beacon":                      {"Recipe": {"Iron Bar":15},                      "Prereq": "Telescope 1"},
-        "Resource Details":            {"Recipe": {"Battery":3},         "Prereq": "Telescope 2"},
-        "Bottleneck Optimizations":    {"Recipe": {"Titanium Bar":5, "Platinum Bar":25, "Steel Bar": 50}, "Prereq": "Resource Details"},
-        "Cargo Logistics":             {"Recipe": {"Aluminum Bar": 10, "Circuit": 3}, "Prereq": "Telescope 4"},
-        "Ore Targeting":               {"Recipe": {"Hammer": 100, "Battery": 50}, "Prereq": "Cargo Logistics"},
-        "Advanced Ore Targeting":      {"Recipe": {"Basic Computer": 100, "Thermal Scanner": 15}, "Prereq": "Ore Targeting"},
-        "Alchemy":                     {"Recipe": {"Gold Bar": 50, "Lens": 6}, "Prereq": "Telescope 4"},
-        "Advanced Alchemy":            {"Recipe": {"Silver": 50000, "Titanium": 25000, "Basic Computer": 6}, "Prereq": "Alchemy"},
-        "Superior Alchemy":            {"Recipe": {"Palladium Bar": 400, "Osmium Bar": 200, "Advanced Computer": 5}, "Prereq": "Advanced Alchemy"},
-        "Asteroid Refined Drilling":   {"Recipe": {"Silicon Bar": 40, "Lead Bar": 80}, "Prereq": "Telescope 3"},
-        "Asteroid Harvester":          {"Recipe": {"Iron Bar": 400, "Circuit": 5}, "Prereq": "Asteroid Refined Drilling"},
-        "Advanced Asteroid Harvester": {"Recipe": {"Space Probe": 1, "Plasma Torch": 50}, "Prereq": "Asteroid Harvester"},
-        "Superior Asteroid Harvester": {"Recipe": {"Nuclear Reactor": 10, "Scrith Alloy": 300, "Inerton Alloy": 600}, "Prereq": "Advanced Asteroid Harvester"},
-        "Debris Scanner":              {"Recipe": {"Collider": 1, "Gravity Chamber": 8}, "Prereq": "Superior Asteroid Harvester"},
-        "Smelter":              {"Recipe": {"Copper": 600, "Iron": 250}, "Prereq": "Asteroid Miner"},
-        "Crafter":              {"Recipe": {"Lead": 5000, "Iron Bar": 5}, "Prereq": "Smelter"},
-        "Advanced Crafter":  {"Recipe": {"Lens": 5, "Gold Bar": 50}, "Prereq": "Crafter"},
-        "Crafting Efficiency":  {"Recipe": {"Solar Panel": 30}, "Prereq": "Advanced Crafter"},
-        "Superior Crafting":  {"Recipe": {"Thermal Scanner": 2, "Advanced Battery": 10, "Laser Torch":20}, "Prereq": ["Crafting Efficiency","Advanced Item Value"]},
-        "Advanced Item Value":  {"Recipe": {"Lens": 5, "Silver Bar": 8}, "Prereq": "Advanced Crafter"},
-        "Crafting Specialist":  {"Recipe": {"Advanced Battery": 3, "Advanced Computer": 2}, "Prereq": "Advanced Item Value"},
-        "Superior Item Value":  {"Recipe": {"Palladium Bar": 200, "Laser Torch": 25}, "Prereq": "Advanced Item Value"},
-        "Advanced Furnace":  {"Recipe": {"Glass": 3, "Aluminum Bar": 10}, "Prereq": "Smelter"},
-        "Smelting Efficiency":  {"Recipe": {"Bronze Bar": 200, "": 8}, "Prereq": ""},
-        "Market Insight":  {"Recipe": {"Silver Bar": 20, "Hammer": 10}, "Prereq": "Telescope 4"},
-        "Inside Trader":  {"Recipe": {"Steel Bar": 25, "Lens": 10}, "Prereq": "Market Insight"},
-        "Market Manipulation":  {"Recipe": {"Diamond": 30000, "Gold Bar": 15000, "Basic Computer": 10}, "Prereq": "Inside Trader"},
-        "Advanced Market Manipulation":  {"Recipe": {"Quadium Alloy": 100, "Advanced Computer": 10, "Telescope": 5}, "Prereq": "Market Manipulation"},
-        "Market Accelerator":  {"Recipe": {"Iridium Bar": 400, "Motor": 1}, "Prereq": "Inside Trader"},
-        "Advanced Market Accelerator":  {"Recipe": {"Inerton Alloy": 115, "Gravity Chamber": 1}, "Prereq": "Market Accelerator"},
-        "Rover Advanced Logistics":  {"Recipe": {"Bronze Bar": 20, "Battery": 20, "Lens": 10}, "Prereq": "Telescope 5"},
-        "Rover Scanning Module":  {"Recipe": {"Aluminum Bar": 100, "Basic Computer": 1}, "Prereq": "Rover Advanced Logistics"},
-        "Rover Resupply":  {"Recipe": {"Platium Bar": 6, "Laser Torch": 1, "Solar Panel": 1}, "Prereq": "Rover Advanced Logistics"},
-        "Advanced Rover Resupply":  {"Recipe": {"Advanced Battery": 10, "Plasma Torch": 6, "Rhodium Bar": 25}, "Prereq": "Rover Resupply"},
-        "Manager Training":  {"Recipe": {"Laser Torch": 1, "Steel Bar": 50}, "Prereq": "Telescope 6"},
-        "Contract Manager":  {"Recipe": {"Titanium Bar": 25, "Circuit": 20}, "Prereq": "Manager Training"},
-        "Advanced Contract Manager":  {"Recipe": {"Advanced Computer": 10, "Thermal Scanner": 10}, "Prereq": "Contract Manager"},
-        "Advanced Manager Training":  {"Recipe": {"Advanced Computer": 2, "Advanced Battery": 10}, "Prereq": "Manager Training"},
-        "Superior Manager Training":  {"Recipe": {"Rhodium Bar": 200}, "Prereq": "Advanced Manager Training"},
-        "Specialist University":  {"Recipe": {"Inerton Alloy": 300, "Motor": 3}, "Prereq": "Advanced Manager Training"},
-        "Advanced Specialist University":  {"Recipe": {"Accumulator": 2, "Scrith Allow": 100}, "Prereq": "Specialist University"},
-        "Colonization":  {"Recipe": {"Copper Bar": 20, "Iron Bar": 10}, "Prereq": "Management"},
-        "Colonization Scouting":  {"Recipe": {"Iron Nail": 15}, "Prereq": "Colonization"},
-        "Colonization Advanced Scouting":  {"Recipe": {"Silver Bar": 60}, "Prereq": "Colonization Scouting"},
-        "Colonization Superior Scouting":  {"Recipe": {"Diamond": 50000}, "Prereq": "Colonization Advanced Scouting"},
-        "Colonization Efficiency":  {"Recipe": {"Silver Bar": 15, "Hammer": 10}, "Prereq": "Colonization"},
-        "Colony Renegotiation":  {"Recipe": {"Bronze Bar": 100, "Hammer": 400}, "Prereq": "Colonization Efficiency"},
-        "Colonization Advanced Efficiency":  {"Recipe": {"Steel Bar": 40, "Laser": 10}, "Prereq": "Colonization Efficiency"},
-        "Colonization Superior Efficiency":  {"Recipe": {"Palladium Bar": 50, "Laser Torch": 15}, "Prereq": "Colonization Advanced Efficiency"},
-        "Colony Tax Incentives":  {"Recipe": {"Aluminum Bar": 60}, "Prereq": ["Colonization Scouting","Colonization Efficiency"]},
-        "Colony Advanced Tax Incentives":  {"Recipe": {"Bronze Bar": 60}, "Prereq": "Colony Tax Incentives"},
-        "Colony Superior Tax Incentives":  {"Recipe": {"Palladium Bar": 60}, "Prereq": "Colony Advanced Tax Incentives"},
-        "Rover":  {"Recipe": {"Copper Wire": 10}, "Prereq": "Asteroid Miner"},
-        "Advanced Mining":  {"Recipe": {"Battery": 5, "Aluminum Bar": 20}, "Prereq": "Rover"},
-        "Advanced Thrusters":  {"Recipe": {"Glass": 2, "Gold Bar": 10}, "Prereq": "Advanced Mining"},
-        "Advanced Cargo Handling":  {"Recipe": {"Hammer": 5, "Silver Bar": 25}, "Prereq": "Advanced Mining"},
-        "Superior Mining":  {"Recipe": {"Laser Torch": 10, "Platinum Bar": 25}, "Prereq": ["Advanced Thrusters","Advanced Cargo Handling"]},
-        "Superior Thrusters":  {"Recipe": {"Advanced Battery": 4}, "Prereq": "Superior Mining"},
-        "Superior Cargo Handling":  {"Recipe": {"Titanium Bar": 50}, "Prereq": "Superior Mining"},
+        "Management":                       {"Recipe": {"Copper":400,    "Iron":50},         "Prereq": "", "unlocked": True},
+        "Asteroid Miner":                   {"Recipe": {"Copper":400,    "Iron":10},         "Prereq": "", "unlocked": True},
+        "Telescope 1":                      {"Recipe": {"Iron":1500,     "Copper Bar":5},    "Prereq": "", "unlocked": True},
+        "Telescope 2":                      {"Recipe": {"Lead Bar":10,   "Silicon":500},     "Prereq": "Telescope 1"},
+        "Telescope 3":                      {"Recipe": {"Iron Nail":10, "Silicon Bar":15},   "Prereq": "Telescope 2"},
+        "Telescope 4":                      {"Recipe": {"Hammer":5,      "Aluminum Bar":20}, "Prereq": "Telescope 3"},
+        "Telescope 5":                      {"Recipe": {"Circuit":3,     "Gold Bar":10},     "Prereq": "Telescope 4"},
+        "Telescope 6":                      {"Recipe": {"Laser":3,       "Bronze Bar":25},   "Prereq": "Telescope 5"},
+        "Telescope 7":                      {"Recipe": {"Solar Panel":3, "Platinum Bar":20}, "Prereq": "Telescope 6"},
+        "Telescope 8":                      {"Recipe": {"Laser Torch":3, "Titanium Bar":10}, "Prereq": "Telescope 7"},
+        "Beacon":                           {"Recipe": {"Iron Bar":15},                      "Prereq": "Telescope 1"},
+        "Resource Details":                 {"Recipe": {"Battery":3},                        "Prereq": "Telescope 2"},
+        "Bottleneck Optimizations":         {"Recipe": {"Titanium Bar":5, "Platinum Bar":25, "Steel Bar": 50}, "Prereq": "Resource Details"},
+        "Cargo Logistics":                  {"Recipe": {"Aluminum Bar": 10, "Circuit": 3},   "Prereq": "Telescope 4"},
+        "Ore Targeting":                    {"Recipe": {"Hammer": 100, "Battery": 50},       "Prereq": "Cargo Logistics"},
+        "Advanced Ore Targeting":           {"Recipe": {"Basic Computer": 100, "Thermal Scanner": 15}, "Prereq": "Ore Targeting"},
+        "Alchemy":                          {"Recipe": {"Gold Bar": 50, "Lens": 6},          "Prereq": "Telescope 4"},
+        "Advanced Alchemy":                 {"Recipe": {"Silver": 50000, "Titanium": 25000, "Basic Computer": 6}, "Prereq": "Alchemy"},
+        "Superior Alchemy":                 {"Recipe": {"Palladium Bar": 400, "Osmium Bar": 200, "Advanced Computer": 5}, "Prereq": "Advanced Alchemy"},
+        "Asteroid Refined Drilling":        {"Recipe": {"Silicon Bar": 40, "Lead Bar": 80}, "Prereq": "Telescope 3"},
+        "Asteroid Harvester":               {"Recipe": {"Iron Bar": 400, "Circuit": 5}, "Prereq": "Asteroid Refined Drilling"},
+        "Advanced Asteroid Harvester":      {"Recipe": {"Space Probe": 1, "Plasma Torch": 50}, "Prereq": "Asteroid Harvester"},
+        "Superior Asteroid Harvester":      {"Recipe": {"Nuclear Reactor": 10, "Scrith Alloy": 300, "Inerton Alloy": 600}, "Prereq": "Advanced Asteroid Harvester"},
+        "Debris Scanner":                   {"Recipe": {"Collider": 1, "Gravity Chamber": 8}, "Prereq": "Superior Asteroid Harvester"},
+        "Smelter":                          {"Recipe": {"Copper": 600, "Iron": 250}, "Prereq": "Asteroid Miner"},
+        "Crafter":                          {"Recipe": {"Lead": 5000, "Iron Bar": 5}, "Prereq": "Smelter"},
+        "Advanced Crafter":                 {"Recipe": {"Lens": 5, "Gold Bar": 50}, "Prereq": "Crafter"},
+        "Crafting Efficiency":              {"Recipe": {"Solar Panel": 30}, "Prereq": "Advanced Crafter"},
+        "Superior Crafting":                {"Recipe": {"Thermal Scanner": 2, "Advanced Battery": 10, "Laser Torch":20}, "Prereq": ["Crafting Efficiency","Advanced Item Value"]},
+        "Advanced Item Value":              {"Recipe": {"Lens": 5, "Silver Bar": 8}, "Prereq": "Advanced Crafter"},
+        "Crafting Specialist":              {"Recipe": {"Advanced Battery": 3, "Advanced Computer": 2}, "Prereq": "Advanced Item Value"},
+        "Superior Item Value":              {"Recipe": {"Palladium Bar": 200, "Laser Torch": 25}, "Prereq": "Advanced Item Value"},
+        "Advanced Furnace":                 {"Recipe": {"Glass": 3, "Aluminum Bar": 10}, "Prereq": "Smelter"},
+        "Smelting Efficiency":              {"Recipe": {"Bronze Bar": 200, "": 8}, "Prereq": ""},
+        "Market Insight":                   {"Recipe": {"Silver Bar": 20, "Hammer": 10}, "Prereq": "Telescope 4"},
+        "Inside Trader":                    {"Recipe": {"Steel Bar": 25, "Lens": 10}, "Prereq": "Market Insight"},
+        "Market Manipulation":              {"Recipe": {"Diamond": 30000, "Gold Bar": 15000, "Basic Computer": 10}, "Prereq": "Inside Trader"},
+        "Advanced Market Manipulation":     {"Recipe": {"Quadium Alloy": 100, "Advanced Computer": 10, "Telescope": 5}, "Prereq": "Market Manipulation"},
+        "Market Accelerator":               {"Recipe": {"Iridium Bar": 400, "Motor": 1}, "Prereq": "Inside Trader"},
+        "Advanced Market Accelerator":      {"Recipe": {"Inerton Alloy": 115, "Gravity Chamber": 1}, "Prereq": "Market Accelerator"},
+        "Rover Advanced Logistics":         {"Recipe": {"Bronze Bar": 20, "Battery": 20, "Lens": 10}, "Prereq": "Telescope 5"},
+        "Rover Scanning Module":            {"Recipe": {"Aluminum Bar": 100, "Basic Computer": 1}, "Prereq": "Rover Advanced Logistics"},
+        "Rover Resupply":                   {"Recipe": {"Platinum Bar": 6, "Laser Torch": 1, "Solar Panel": 1}, "Prereq": "Rover Advanced Logistics"},
+        "Advanced Rover Resupply":          {"Recipe": {"Advanced Battery": 10, "Plasma Torch": 6, "Rhodium Bar": 25}, "Prereq": "Rover Resupply"},
+        "Manager Training":                 {"Recipe": {"Laser Torch": 1, "Steel Bar": 50}, "Prereq": "Telescope 6"},
+        "Contract Manager":                 {"Recipe": {"Titanium Bar": 25, "Circuit": 20}, "Prereq": "Manager Training"},
+        "Advanced Contract Manager":        {"Recipe": {"Advanced Computer": 10, "Thermal Scanner": 10}, "Prereq": "Contract Manager"},
+        "Advanced Manager Training":        {"Recipe": {"Advanced Computer": 2, "Advanced Battery": 10}, "Prereq": "Manager Training"},
+        "Superior Manager Training":        {"Recipe": {"Rhodium Bar": 200}, "Prereq": "Advanced Manager Training"},
+        "Specialist University":            {"Recipe": {"Inerton Alloy": 300, "Motor": 3}, "Prereq": "Advanced Manager Training"},
+        "Advanced Specialist University":   {"Recipe": {"Accumulator": 2, "Scrith Allow": 100}, "Prereq": "Specialist University"},
+        "Colonization":                     {"Recipe": {"Copper Bar": 20, "Iron Bar": 10}, "Prereq": "Management"},
+        "Colonization Scouting":            {"Recipe": {"Iron Nail": 15}, "Prereq": "Colonization"},
+        "Colonization Advanced Scouting":   {"Recipe": {"Silver Bar": 60}, "Prereq": "Colonization Scouting"},
+        "Colonization Superior Scouting":   {"Recipe": {"Diamond": 50000}, "Prereq": "Colonization Advanced Scouting"},
+        "Colonization Efficiency":          {"Recipe": {"Silver Bar": 15, "Hammer": 10}, "Prereq": "Colonization"},
+        "Colony Renegotiation":             {"Recipe": {"Bronze Bar": 100, "Hammer": 400}, "Prereq": "Colonization Efficiency"},
+        "Colonization Advanced Efficiency": {"Recipe": {"Steel Bar": 40, "Laser": 10}, "Prereq": "Colonization Efficiency"},
+        "Colonization Superior Efficiency": {"Recipe": {"Palladium Bar": 50, "Laser Torch": 15}, "Prereq": "Colonization Advanced Efficiency"},
+        "Colony Tax Incentives":            {"Recipe": {"Aluminum Bar": 60}, "Prereq": ["Colonization Scouting","Colonization Efficiency"]},
+        "Colony Advanced Tax Incentives":   {"Recipe": {"Bronze Bar": 60}, "Prereq": "Colony Tax Incentives"},
+        "Colony Superior Tax Incentives":   {"Recipe": {"Palladium Bar": 60}, "Prereq": "Colony Advanced Tax Incentives"},
+        "Rover":                            {"Recipe": {"Copper Wire": 10}, "Prereq": "Asteroid Miner"},
+        "Advanced Mining":                  {"Recipe": {"Battery": 5, "Aluminum Bar": 20}, "Prereq": "Rover"},
+        "Advanced Thrusters":               {"Recipe": {"Glass": 2, "Gold Bar": 10}, "Prereq": "Advanced Mining"},
+        "Advanced Cargo Handling":          {"Recipe": {"Hammer": 5, "Silver Bar": 25}, "Prereq": "Advanced Mining"},
+        "Superior Mining":                  {"Recipe": {"Laser Torch": 10, "Platinum Bar": 25}, "Prereq": ["Advanced Thrusters","Advanced Cargo Handling"]},
+        "Superior Thrusters":               {"Recipe": {"Advanced Battery": 4}, "Prereq": "Superior Mining"},
+        "Superior Cargo Handling":          {"Recipe": {"Titanium Bar": 50}, "Prereq": "Superior Mining"},
 #        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
 #        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
 #        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
@@ -169,8 +169,76 @@ DEFAULT_DATA = {
 #        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
     },
     "planets": {
-        1: {"Name": "Balor", "BasePrice": 100, "Telescope": 0, "Resources": {"Copper": 100}, "Distance": 10, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        2: {"Name": "Drasta", "BasePrice": 200, "Telescope": 0, "Resources": {"Copper": 80, "Iron": 20}, "Distance": 12, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        1:  {"Name": "Balor",        "BasePrice": 100,        "Telescope": 0,  "Resources": {"Copper": 100},                          "Distance": 10,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        2:  {"Name": "Drasta",       "BasePrice": 200,        "Telescope": 0,  "Resources": {"Copper": 80, "Iron": 20},                "Distance": 12,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        3:  {"Name": "Anadius",      "BasePrice": 500,        "Telescope": 0,  "Resources": {"Copper": 50, "Iron": 50},                "Distance": 14,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        4:  {"Name": "Dholen",       "BasePrice": 1250,       "Telescope": 0,  "Resources": {"Iron": 80, "Lead": 20},                  "Distance": 15,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        5:  {"Name": "Verr",         "BasePrice": 5000,       "Telescope": 1,  "Resources": {"Lead": 50, "Iron": 30, "Copper": 20},    "Distance": 16,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        6:  {"Name": "Newton",       "BasePrice": 9000,       "Telescope": 1,  "Resources": {"Lead": 100},                             "Distance": 18,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        7:  {"Name": "Widow",        "BasePrice": 15000,      "Telescope": 1,  "Resources": {"Iron": 40, "Copper": 40, "Silicon": 20}, "Distance": 20,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        8:  {"Name": "Acheron",      "BasePrice": 25000,      "Telescope": 2,  "Resources": {"Silicon": 60, "Copper": 40},             "Distance": 22,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        9:  {"Name": "Yangtze",      "BasePrice": 40000,      "Telescope": 2,  "Resources": {"Silicon": 80, "Aluminum": 20},           "Distance": 23,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        10: {"Name": "Solveig",      "BasePrice": 75000,      "Telescope": 2,  "Resources": {"Aluminum": 50, "Silicon": 30, "Lead": 20},"Distance": 25, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        11: {"Name": "Imir",         "BasePrice": 150000,     "Telescope": 3,  "Resources": {"Aluminum": 100},                         "Distance": 26,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        12: {"Name": "Relic",        "BasePrice": 250000,     "Telescope": 3,  "Resources": {"Lead": 45, "Silicon": 35, "Silver": 20}, "Distance": 28,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        13: {"Name": "Nith",         "BasePrice": 400000,     "Telescope": 3,  "Resources": {"Silver": 80, "Aluminum": 20},            "Distance": 30,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        14: {"Name": "Batalla",      "BasePrice": 800000,     "Telescope": 4,  "Resources": {"Copper": 40, "Iron": 40, "Gold": 20},    "Distance": 33,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        15: {"Name": "Micah",        "BasePrice": 1500000,    "Telescope": 4,  "Resources": {"Gold": 50, "Silver": 50},                "Distance": 35,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        16: {"Name": "Pranas",       "BasePrice": 3000000,    "Telescope": 4,  "Resources": {"Gold": 100},                             "Distance": 37,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        17: {"Name": "Castellus",    "BasePrice": 6000000,    "Telescope": 5,  "Resources": {"Aluminum": 40, "Silicon": 35, "Diamond": 25}, "Distance": 40, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        18: {"Name": "Gorgon",       "BasePrice": 12000000,   "Telescope": 5,  "Resources": {"Diamond": 80, "Lead": 20},               "Distance": 43,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        19: {"Name": "Parnitha",     "BasePrice": 25000000,   "Telescope": 5,  "Resources": {"Gold": 70, "Platinum": 30},               "Distance": 45,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        20: {"Name": "Orisoni",      "BasePrice": 50000000,   "Telescope": 6,  "Resources": {"Platinum": 70, "Diamond": 30},            "Distance": 48,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        21: {"Name": "Theseus",      "BasePrice": 100000000,  "Telescope": 6,  "Resources": {"Platinum": 100},                          "Distance": 51,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        22: {"Name": "Zelene",       "BasePrice": 200000000,  "Telescope": 6,  "Resources": {"Silver": 70, "Titanium": 30},            "Distance": 54,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        23: {"Name": "Han",          "BasePrice": 400000000,  "Telescope": 7,  "Resources": {"Titanium": 70, "Diamond": 20, "Gold": 10}, "Distance": 57, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        24: {"Name": "Strennus",     "BasePrice": 800000000,  "Telescope": 7,  "Resources": {"Titanium": 70, "Platinum": 30},           "Distance": 58,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        25: {"Name": "Osun",         "BasePrice": 1600000000, "Telescope": 7,  "Resources": {"Aluminum": 60, "Iridium": 40},           "Distance": 60,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        26: {"Name": "Ploitari",     "BasePrice": 3200000000, "Telescope": 8,  "Resources": {"Iridium": 50, "Diamond": 50},            "Distance": 63,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        27: {"Name": "Elysta",       "BasePrice": 6400000000, "Telescope": 8,  "Resources": {"Iridium": 100},                          "Distance": 67,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        28: {"Name": "Tikkun",       "BasePrice": 12500000000,"Telescope": 8,  "Resources": {"Iridium": 40, "Titanium": 35, "Palladium": 25}, "Distance": 70, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        29: {"Name": "Satent",       "BasePrice": 25000000000,"Telescope": 9,  "Resources": {"Palladium": 60, "Titanium": 40},         "Distance": 72,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        30: {"Name": "Urla Rast",    "BasePrice": 50000000000,"Telescope": 9,  "Resources": {"Palladium": 90, "Diamond": 10},          "Distance": 73,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        31: {"Name": "Vular",        "BasePrice": 100000000000,"Telescope": 9, "Resources": {"Palladium": 70, "Osmium": 30},           "Distance": 75,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        32: {"Name": "Nibiru",       "BasePrice": 250000000000,"Telescope": 10,"Resources": {"Osmium": 60, "Iridium": 40},             "Distance": 76,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        33: {"Name": "Xena",         "BasePrice": 600000000000,"Telescope": 10,"Resources": {"Osmium": 100},                           "Distance": 78,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        34: {"Name": "Rupert",       "BasePrice": 1500000000000,"Telescope":10,"Resources": {"Palladium": 55, "Osmium": 30, "Rhodium": 15}, "Distance": 78, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        35: {"Name": "Pax",          "BasePrice": 4000000000000,"Telescope":11,"Resources": {"Rhodium": 50, "Platinum": 50},            "Distance": 80,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        36: {"Name": "Ivyra",        "BasePrice": 10000000000000,"Telescope":11,"Resources": {"Rhodium": 100},                         "Distance": 81,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        37: {"Name": "Utrits",       "BasePrice": 25000000000000,"Telescope":11,"Resources": {"Rhodium": 130, "Inerton": 10},          "Distance": 82,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        38: {"Name": "Doosie",       "BasePrice": 62000000000000,"Telescope":12,"Resources": {"Inerton": 50, "Osmium": 50},            "Distance": 84,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        39: {"Name": "Zulu",         "BasePrice": 160000000000000,"Telescope":12,"Resources": {"Inerton": 100},                        "Distance": 84,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        40: {"Name": "Unicae",       "BasePrice": 400000000000000,"Telescope":12,"Resources": {"Inerton": 80, "Quadium": 20},          "Distance": 85,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        41: {"Name": "Dune",         "BasePrice": 1000000000000000,"Telescope":13,"Resources": {"Osmium": 60, "Quadium": 40},          "Distance": 87,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        42: {"Name": "Naraka",       "BasePrice": 2500000000000000,"Telescope":13,"Resources": {"Quadium": 100},                       "Distance": 88,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        43: {"Name": "Daedalus",     "BasePrice": 6200000000000000,"Telescope":13,"Resources": {"Quadium": 60, "Inerton": 25, "Scrith": 15}, "Distance": 89, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        44: {"Name": "Clovis",       "BasePrice": 15000000000000000,"Telescope":14,"Resources": {"Scrith": 50, "Quadium": 50},         "Distance": 90,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        45: {"Name": "Zero",         "BasePrice": 40000000000000000,"Telescope":14,"Resources": {"Scrith": 100},                       "Distance": 91,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        46: {"Name": "Sotomi",       "BasePrice": 100000000000000000,"Telescope":14,"Resources": {"Scrith": 75, "Uru": 25},            "Distance": 92,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        47: {"Name": "Remidian",     "BasePrice": 250000000000000000,"Telescope":15,"Resources": {"Uru": 60, "Quadium": 40},           "Distance": 93,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        48: {"Name": "Muse",         "BasePrice": 600000000000000000,"Telescope":15,"Resources": {"Uru": 100},                         "Distance": 94,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        49: {"Name": "Arabis",       "BasePrice": 1500000000000000000,"Telescope":15,"Resources": {"Uru": 110, "Vibranium": 20},       "Distance": 95,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        50: {"Name": "Vesna",        "BasePrice": 3800000000000000000,"Telescope":16,"Resources": {"Vibranium": 60, "Scrith": 40},     "Distance": 96,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        51: {"Name": "Chandra",      "BasePrice": 10000000000000000000,"Telescope":16,"Resources": {"Vibranium": 100},                 "Distance": 97,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        52: {"Name": "Vega",         "BasePrice": 25000000000000000000,"Telescope":16,"Resources": {"Vibranium": 70, "Aether": 20, "Rhodium": 10}, "Distance": 98, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        53: {"Name": "Crius",        "BasePrice": 60000000000000000000,"Telescope":17,"Resources": {"Aether": 50, "Scrith": 50},       "Distance": 99,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        54: {"Name": "Singhana",     "BasePrice": 150000000000000000000,"Telescope":17,"Resources": {"Aether": 100},                   "Distance": 100, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        55: {"Name": "Zumbia",       "BasePrice": 360000000000000000000,"Telescope":17,"Resources": {"Aether": 70, "Vibranium": 20, "Viterium": 10}, "Distance": 101, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        56: {"Name": "Elysium",      "BasePrice": 900000000000000000000,"Telescope":18,"Resources": {"Viterium": 60, "Uru": 40},       "Distance": 102, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        57: {"Name": "Nyota",        "BasePrice": 2800000000000000000000,"Telescope":18,"Resources": {"Viterium": 100},                "Distance": 103, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        58: {"Name": "Doral",        "BasePrice": 7500000000000000000000,"Telescope":18,"Resources": {"Viterium": 100},                "Distance": 104, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        59: {"Name": "Nikara",       "BasePrice": 21000000000000000000000,"Telescope":19,"Resources": {"Xynium": 70, "Vibranium": 30}, "Distance": 105, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        60: {"Name": "Limbo",        "BasePrice": 59000000000000000000000,"Telescope":19,"Resources": {"Xynium": 100},                 "Distance": 106, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        61: {"Name": "Bob",          "BasePrice": 170000000000000000000000,"Telescope":19,"Resources": {"Xynium": 70, "Quolium": 30},  "Distance": 107, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        62: {"Name": "Midas",        "BasePrice": 460000000000000000000000,"Telescope":20,"Resources": {"Quolium": 55, "Aether": 45},  "Distance": 108, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        63: {"Name": "Antigone",     "BasePrice": 1300000000000000000000000,"Telescope":20,"Resources": {"Quolium": 100},              "Distance": 109, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        64: {"Name": "Hecate",       "BasePrice": 3900000000000000000000000,"Telescope":20,"Resources": {"Quolium": 50, "Xynium": 25, "Luterium": 25}, "Distance": 110, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        65: {"Name": "Sterop",       "BasePrice": 11000000000000000000000000,"Telescope":21,"Resources": {"Luterium": 62, "Quolium": 21, "Xynium": 17}, "Distance": 111, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        66: {"Name": "Lavinia",      "BasePrice": 33000000000000000000000000,"Telescope":21,"Resources": {"Luterium": 100},             "Distance": 112, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        67: {"Name": "Ren",          "BasePrice": 95000000000000000000000000,"Telescope":21,"Resources": {"Luterium": 70, "Quolium": 20, "Wraith": 10}, "Distance": 113, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        68: {"Name": "Gorgons",      "BasePrice": 270000000000000000000000000,"Telescope":22,"Resources": {"Wraith": 60, "Xynium": 40}, "Distance": 114, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        69: {"Name": "Pontus",       "BasePrice": 800000000000000000000000000,"Telescope":22,"Resources": {"Wraith": 80, "Luterium": 20}, "Distance": 115, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+        70: {"Name": "Leto",         "BasePrice": 2400000000000000000000000000,"Telescope":22,"Resources": {"Wraith": 100},             "Distance": 116, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
     }
 }
 BASE_MINING_RATE = 0.25
@@ -204,13 +272,23 @@ def load_data() -> dict:
             project["unlocked"] = False
         if "Researched" not in project.keys():
             project["Researched"] = False
-    for p in tempData["planets"]:
-        planet = tempData["planets"][p]
-        if "colony" not in planet.keys():
-            planet["colony"] = [1,1,1]
-        if "probes" not in planet.keys():
-            planet["probes"] = [1,1,1]
-            
+    # JSON turns int keys to strings – re-index as ints
+    raw_planets = tempData.get("planets", {})
+    fixed = {}
+    for k, v in raw_planets.items():
+        try:
+            ik = int(k)
+        except (ValueError, TypeError):
+            ik = k
+        # ensure bonus lists
+        if "colony" not in v:
+            v["colony"] = [1, 1, 1]
+        if "probes" not in v:
+            v["probes"] = [1, 1, 1]
+        if "unlocked" not in v:
+            v["unlocked"] = (v.get("Telescope", 99) == 0)
+        fixed[ik] = v
+    tempData["planets"] = fixed
     return tempData
 
 
@@ -408,17 +486,50 @@ def analyze_all(data: dict, smelters: int = 1, crafters: int = 1) -> list:
         results.append(analyze_recipe(name, "items", data, smelters, crafters))
     return results
     
+def ore_unlocked_from_planets(ore: str, data: dict) -> bool:
+    """An ore is unlocked if any owned planet produces it."""
+    for planet in data.get("planets", {}).values():
+        if planet.get("unlocked", False) and ore in planet["Resources"]:
+            return True
+    return False
+
+
+def ore_mining_rate(ore: str, data: dict) -> float:
+    """Sum of (mining_rate * ore_pct/100) across all unlocked planets.
+    Returns ore units per second contributed by all active planets.
+    """
+    total = 0.0
+    for planet in data.get("planets", {}).values():
+        if not planet.get("unlocked", False):
+            continue
+        pct = planet["Resources"].get(ore, 0)
+        if pct == 0:
+            continue
+        lvl     = planet["Levels"]["Mining"]
+        # combined bonus = probe[0] * colony[0]
+        bonus   = planet.get("probes", [1,1,1])[0] * planet.get("colony", [1,1,1])[0]
+        rate    = mining_rate(lvl, bonus)
+        total  += rate * (pct / 100.0)
+    return total
+
+
 def mining_rate(level: int, bonus: float = 1) -> float:
+    if level == 0:
+        return 0
     l = level - 1
     mining = bonus * (BASE_MINING_RATE + (0.1 * l) + (0.017 * (l ** 2)))
     return mining
     
 def ship_speed(level: int, bonus: float = 1) -> float:
+    if level == 0:
+        return 0
     l = level - 1
     speed = bonus * (1 + (0.2 * l) + ((l ** 2) / 75))
     return speed
     
 def ship_cargo(level: int, bonus: float = 1) -> int:
+    if level == 0:
+        return 0
     l = level - 1
     cargo = round(bonus * (5 + (2 * l) + (l ** 2)))
     return cargo
@@ -605,9 +716,13 @@ class SpreadsheetGrid(ttk.Frame):
                 val = row[ci] if ci < len(row) else ""
                 if ci in self._checkbox_cols:
                     # Draw a checkbox glyph centred in the cell
+                    # (works whether or not the col is also readonly)
                     checked = str(val).lower() in ("true", "1", "yes")
                     glyph = "☑" if checked else "☐"
-                    glyph_color = self._accent if checked else MUTED
+                    if ci in self._readonly_cols:
+                        glyph_color = ACCENT2 if checked else "#444460"
+                    else:
+                        glyph_color = self._accent if checked else MUTED
                     c.create_text(x + w//2, y + H//2, text=glyph,
                                   anchor="center", fill=glyph_color,
                                   font=("Segoe UI", 13))
@@ -989,6 +1104,7 @@ class App(tk.Tk):
         self._tab_alloys(nb)
         self._tab_items(nb)
         self._tab_projects(nb)
+        self._tab_planets(nb)
 
     # ── tab: dashboard ────────────────────────────────────────────────────────
     def _tab_dashboard(self, nb):
@@ -1071,17 +1187,21 @@ class App(tk.Tk):
             ("Stars",          60, "e"),
             ("Market",        110, "w"),
             ("Real Price ($)", 110, "e"),
+            ("Ore/s",          90, "e"),
         ]
         grid = SpreadsheetGrid(frame, cols, accent=ACCENT,
                                on_change=lambda: self._commit_ores(grid),
                                checkbox_cols={0},
                                slider_cols={4: (-2, 4)},
-                               readonly_cols={5})
+                               readonly_cols={0, 5, 6})  # 0=planet-driven, 5=realPrice, 6=ore/s
         grid.pack(fill="both", expand=True)
         for name, entry in self.data["ores"].items():
-            realPrice = getRealPrice(entry["base_price"], entry["stars"], entry["market"], "ores")
-            grid.append_row([entry.get("unlocked", False), name, fmt(entry["base_price"]),
-                             entry["stars"], entry["market"], fmt(realPrice)])
+            unlocked  = ore_unlocked_from_planets(name, self.data)
+            realPrice = getRealPrice(entry["base_price"], entry.get("stars", 0), entry.get("market", 0), "ores")
+            ores      = ore_mining_rate(name, self.data)
+            grid.append_row([unlocked, name, fmt(entry["base_price"]),
+                             entry.get("stars", 0), entry.get("market", 0),
+                             fmt(realPrice), f"{ores:.4f}" if ores else "—"])
         self._ore_grid = grid
 
     def _commit_ores(self, grid):
@@ -1090,7 +1210,9 @@ class App(tk.Tk):
             name = str(row[1]).strip()
             if not name:
                 continue
-            unlocked = str(row[0]).lower() in ("true", "1", "yes")
+            # Unlocked is derived from planet ownership, not editable
+            unlocked = ore_unlocked_from_planets(name, self.data)
+            row[0] = str(unlocked)  # keep display in sync
             try:
                 price = get_price(row[2])
             except (ValueError, IndexError):
@@ -1102,9 +1224,10 @@ class App(tk.Tk):
             rp = getRealPrice(price, stars, market, "ores")
             new_ores[name] = {"base_price": price, "unlocked": unlocked,
                               "stars": stars, "market": market, "realPrice": rp}
-            # write back into grid._data so the canvas redraws correctly
             row[2] = fmt(price)
             row[5] = fmt(rp)
+            ors = ore_mining_rate(name, self.data)
+            row[6] = f"{ors:.4f}" if ors else "—"
         self.data["ores"] = new_ores
         save_data(self.data)
         self._refresh_table()
@@ -1505,6 +1628,250 @@ class App(tk.Tk):
         self._refresh_table()
 
 
+
+    # ── tab: planets ──────────────────────────────────────────────────────────
+    def _tab_planets(self, nb):
+        frame = ttk.Frame(nb, style="Dark.TFrame", padding=8)
+        nb.add(frame, text="🪐  Planets")
+
+        # ── toolbar ───────────────────────────────────────────────────────────
+        tb = ttk.Frame(frame, style="Dark.TFrame")
+        tb.pack(fill="x", pady=(0, 6))
+        ttk.Label(tb, text="Click Owned to toggle  ·  Click −/+ on level cells to adjust  ·  Double-click bonuses to edit",
+                  style="Muted.TLabel").pack(side="left", padx=4)
+
+        # ── treeview ──────────────────────────────────────────────────────────
+        pf = ttk.Frame(frame, style="Dark.TFrame")
+        pf.pack(fill="both", expand=True)
+
+        pcols = ("num", "name", "telescope", "unlocked", "ores",
+                 "mlvl", "mining", "slvl", "speed", "clvl", "cargo",
+                 "probe_m", "probe_s", "probe_c",
+                 "colony_m", "colony_s", "colony_c")
+        self._planet_tree = ttk.Treeview(pf, columns=pcols,
+                                         show="headings", selectmode="browse")
+
+        col_defs = [
+            ("num",      "#",          40, "center"),
+            ("name",     "Planet",    120, "w"),
+            ("telescope","Scope",      50, "center"),
+            ("unlocked", "Owned",      55, "center"),
+            ("ores",     "Ores",      220, "w"),
+            ("mlvl",     "M.Lvl",      55, "center"),
+            ("mining",   "Mining/s",   85, "e"),
+            ("slvl",     "S.Lvl",      55, "center"),
+            ("speed",    "Speed",      70, "e"),
+            ("clvl",     "C.Lvl",      55, "center"),
+            ("cargo",    "Cargo",      60, "e"),
+            ("probe_m",  "Prb Mng",    70, "e"),
+            ("probe_s",  "Prb Spd",    70, "e"),
+            ("probe_c",  "Prb Crg",    70, "e"),
+            ("colony_m", "Col Mng",    70, "e"),
+            ("colony_s", "Col Spd",    70, "e"),
+            ("colony_c", "Col Crg",    70, "e"),
+        ]
+        for cid, label, width, anchor in col_defs:
+            self._planet_tree.heading(cid, text=label)
+            self._planet_tree.column(cid, width=width, anchor=anchor, stretch=False)
+
+        vsb = ttk.Scrollbar(pf, orient="vertical",   command=self._planet_tree.yview)
+        hsb = ttk.Scrollbar(pf, orient="horizontal", command=self._planet_tree.xview)
+        self._planet_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self._planet_tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        pf.rowconfigure(0, weight=1)
+        pf.columnconfigure(0, weight=1)
+
+        self._planet_tree.tag_configure("row_a",    background=ROW_A)
+        self._planet_tree.tag_configure("row_b",    background=ROW_B)
+        self._planet_tree.tag_configure("locked",   foreground="#555570")
+        self._planet_tree.tag_configure("owned",    foreground=TEXT)
+
+        # double-click to edit level/bonus; single-click col 4 to toggle owned
+        self._planet_tree.bind("<Double-1>",      self._planet_tree_edit)
+        self._planet_tree.bind("<ButtonRelease-1>", self._planet_tree_click)
+
+        self._refresh_planets()
+
+    def _sync_ore_unlocks(self):
+        """Update ores[x]["unlocked"] and Ore/s from planet ownership."""
+        for ore_name, ore_entry in self.data["ores"].items():
+            ore_entry["unlocked"] = ore_unlocked_from_planets(ore_name, self.data)
+        if hasattr(self, "_ore_grid"):
+            for row in self._ore_grid._data:
+                name = str(row[1]).strip()
+                if name in self.data["ores"]:
+                    row[0] = str(self.data["ores"][name]["unlocked"])
+                    ors = ore_mining_rate(name, self.data)
+                    row[6] = f"{ors:.4f}" if ors else "—"
+            self._ore_grid._redraw()
+
+    def _refresh_planets(self):
+        self._sync_ore_unlocks()
+        tree = self._planet_tree
+        for item in tree.get_children():
+            tree.delete(item)
+
+        planets = self.data.get("planets", {})
+        rows = sorted(planets.items(), key=lambda item: item[0])  # always by number
+
+        for i, (num, p) in enumerate(rows):
+            owned   = p.get("unlocked", p.get("Telescope", 99) == 0)
+            mlvl    = p["Levels"]["Mining"]
+            slvl    = p["Levels"]["Speed"]
+            clvl    = p["Levels"]["Cargo"]
+            probe   = p.get("probes",  [1, 1, 1])
+            colony  = p.get("colony",  [1, 1, 1])
+            mb      = probe[0] * colony[0]
+            sb      = probe[1] * colony[1]
+            cb      = probe[2] * colony[2]
+            mrate   = mining_rate(mlvl, mb)
+            speed   = ship_speed(slvl, sb)
+            cargo   = ship_cargo(clvl, cb)
+
+            ores_str = ",  ".join(
+                f"{ore} {pct}%" for ore, pct in p["Resources"].items()
+            )
+            scope_str = str(p.get("Telescope", 0)) if p.get("Telescope", 0) else "—"
+
+            tag = "row_a" if i % 2 == 0 else "row_b"
+            tag2 = "owned" if owned else "locked"
+
+            # Level cells show "− N +" for owned planets, "—" otherwise
+            def lvl_str(lvl): return f"− {lvl} +" if owned else "—"
+
+            tree.insert("", "end", iid=str(num), tags=(tag, tag2),
+                        values=(
+                            num, p["Name"], scope_str,
+                            "✓" if owned else "·",
+                            ores_str,
+                            lvl_str(mlvl), f"{mrate:.3f}" if owned else "—",
+                            lvl_str(slvl), f"{speed:.2f}" if owned else "—",
+                            lvl_str(clvl), cargo if owned else "—",
+                            probe[0], probe[1], probe[2],
+                            colony[0], colony[1], colony[2],
+                        ))
+
+    def _planet_tree_click(self, event):
+        """Toggle owned (col 4) or nudge level via −/+ click (cols 6,8,10)."""
+        tree = self._planet_tree
+        col  = tree.identify_column(event.x)
+        item = tree.identify_row(event.y)
+        if not item:
+            return
+        num    = int(item)
+        planet = self.data["planets"].get(num)
+        if planet is None:
+            return
+
+        if col == "#4":  # Owned toggle
+            was_owned = planet.get("unlocked", False)
+            planet["unlocked"] = not was_owned
+            if not was_owned:  # just turned on → set levels to 1
+                planet["Levels"] = {"Mining": 1, "Speed": 1, "Cargo": 1}
+            save_data(self.data)
+            self._refresh_planets()
+            self._refresh_table()
+            return
+
+        # Level +/- columns: #6=mlvl, #8=slvl, #10=clvl
+        level_cols = {"#6": "Mining", "#8": "Speed", "#10": "Cargo"}
+        if col not in level_cols or not planet.get("unlocked", False):
+            return
+        key   = level_cols[col]
+        bbox  = tree.bbox(item, col)
+        if not bbox:
+            return
+        # Determine if click was in left third (−) or right third (+)
+        cell_x = event.x - bbox[0]
+        cell_w = bbox[2]
+        cur    = planet["Levels"][key]
+        if cell_x < cell_w // 3:
+            planet["Levels"][key] = max(1, cur - 1)
+        elif cell_x > cell_w * 2 // 3:
+            planet["Levels"][key] = cur + 1
+        else:
+            return  # click in middle — do nothing
+        save_data(self.data)
+        self._refresh_planets()
+        self._refresh_table()
+
+    def _planet_tree_edit(self, event):
+        """Double-click to edit level or bonus columns inline."""
+        tree  = self._planet_tree
+        col   = tree.identify_column(event.x)
+        item  = tree.identify_row(event.y)
+        if not item:
+            return
+
+        # Map treeview column id (#N) to our column names
+        col_names = ["num", "name", "telescope", "unlocked", "ores",
+                     "mlvl", "mining", "slvl", "speed", "clvl", "cargo",
+                     "probe_m", "probe_s", "probe_c",
+                     "colony_m", "colony_s", "colony_c"]
+        try:
+            col_idx = int(col[1:]) - 1
+            col_name = col_names[col_idx]
+        except (ValueError, IndexError):
+            return
+
+        editable = {
+            "mlvl":     ("Levels", "Mining"),
+            "slvl":     ("Levels", "Speed"),
+            "clvl":     ("Levels", "Cargo"),
+            "probe_m":  ("probes",  0),
+            "probe_s":  ("probes",  1),
+            "probe_c":  ("probes",  2),
+            "colony_m": ("colony",  0),
+            "colony_s": ("colony",  1),
+            "colony_c": ("colony",  2),
+        }
+        if col_name not in editable:
+            return
+
+        num = int(item)
+        planet = self.data["planets"].get(num)
+        if planet is None:
+            return
+
+        path = editable[col_name]
+        if path[0] == "Levels":
+            cur = planet["Levels"][path[1]]
+        else:
+            cur = planet[path[0]][path[1]]
+
+        # popup entry
+        bbox = tree.bbox(item, col)
+        if not bbox:
+            return
+        x, y, w, h = bbox
+        var = tk.StringVar(value=str(cur))
+        ent = tk.Entry(tree, textvariable=var, bg=ENTRY_BG, fg=TEXT,
+                       insertbackground=TEXT, relief="flat",
+                       font=REG_FONT, width=6)
+        ent.place(x=x, y=y, width=w, height=h)
+        ent.focus_set()
+        ent.select_range(0, "end")
+
+        def commit(e=None):
+            try:
+                val = float(var.get())
+                if path[0] == "Levels":
+                    planet["Levels"][path[1]] = int(val)
+                else:
+                    planet[path[0]][path[1]] = val
+            except ValueError:
+                pass
+            ent.destroy()
+            save_data(self.data)
+            self._refresh_planets()
+            self._refresh_table()  # ore rates affect dashboard
+
+        ent.bind("<Return>",   commit)
+        ent.bind("<FocusOut>", commit)
+        ent.bind("<Escape>",   lambda e: ent.destroy())
+
     # ── save / reset ──────────────────────────────────────────────────────────
     def _save(self):
         save_data(self.data)
@@ -1535,6 +1902,15 @@ class App(tk.Tk):
             proj["Researched"] = False
         self._smelters.set(1)
         self._crafters.set(1)
+        for planet in self.data["planets"].values():
+            was_default = (planet.get("Telescope", 99) == 0)
+            planet["unlocked"] = was_default
+            # Default planets start at level 1, locked planets reset to 0
+            planet["Levels"]   = {"Mining": 1 if was_default else 0,
+                                  "Speed":  1 if was_default else 0,
+                                  "Cargo":  1 if was_default else 0}
+            planet["probes"]   = [1, 1, 1]
+            planet["colony"]   = [1, 1, 1]
         save_data(self.data)
         messagebox.showinfo("Sell Galaxy",
                             "Galaxy sold!\nRestart the app to refresh all grids.")
