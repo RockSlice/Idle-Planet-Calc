@@ -16,6 +16,7 @@ from tkinter import ttk, messagebox, font as tkfont
 # ── path helpers ─────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE   = os.path.join(SCRIPT_DIR, "ipm_data.json")
+PREFS_FILE  = os.path.join(SCRIPT_DIR, "ipm_prefs.json")
 
 # ── default seed data ─────────────────────────────────────────────────────────
 DEFAULT_DATA = {
@@ -302,6 +303,43 @@ def load_data() -> dict:
 def save_data(data: dict) -> None:
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
+# ── preferences helpers ──────────────────────────────────────────────────────────
+
+DEFAULT_PREFS = {
+    "sort": {
+        "dashboard_filter": "All",
+        "dashboard_sort":   "vps_profit_ore",
+        "projects_sort":    "time",
+    },
+    "col_widths": {
+        "dashboard": {},
+        "projects":  {},
+        "planets":   {},
+    },
+}
+
+def load_prefs() -> dict:
+    prefs = {}
+    if os.path.exists(PREFS_FILE):
+        try:
+            with open(PREFS_FILE, "r") as f:
+                prefs = json.load(f)
+        except Exception:
+            prefs = {}
+    def _merge(base, override):
+        for k, v in base.items():
+            if k not in override:
+                override[k] = json.loads(json.dumps(v))
+            elif isinstance(v, dict) and isinstance(override[k], dict):
+                _merge(v, override[k])
+        return override
+    return _merge(DEFAULT_PREFS, prefs)
+
+def save_prefs(prefs: dict) -> None:
+    with open(PREFS_FILE, "w") as f:
+        json.dump(prefs, f, indent=2)
+
 
 # ── calculation helpers ───────────────────────────────────────────────────────
 
@@ -1124,6 +1162,7 @@ class App(tk.Tk):
 
         self._smelters = tk.IntVar(value=1)
         self._crafters = tk.IntVar(value=1)
+        self._prefs = load_prefs()
         self._build_styles()
         self._build_ui()
         self._refresh_table()
@@ -1195,20 +1234,20 @@ class App(tk.Tk):
         flt.pack(fill="x")
 
         ttk.Label(flt, text="Show:", style="Dark.TLabel").pack(side="left", padx=(0, 6))
-        self._filter_var = tk.StringVar(value="All")
+        self._filter_var = tk.StringVar(value=self._prefs["sort"]["dashboard_filter"])
         for val in ("All", "Alloys", "Items"):
             ttk.Radiobutton(flt, text=val, variable=self._filter_var, value=val,
-                            command=self._refresh_table,
+                            command=self._on_dashboard_filter_change,
                             style="Dark.TLabel").pack(side="left", padx=4)
 
         ttk.Label(flt, text="Sort by:", style="Dark.TLabel").pack(side="left", padx=(20, 6))
-        self._sort_var = tk.StringVar(value="vps_profit_ore")
+        self._sort_var = tk.StringVar(value=self._prefs["sort"]["dashboard_sort"])
         sort_opts = [(c[0], c[1]) for c in COL_DEFS if c[1] not in ("name", "category")]
         sort_combo = ttk.Combobox(flt, textvariable=self._sort_var,
                                   values=[o[1] for o in sort_opts],
                                   state="readonly", width=20, style="Dark.TCombobox")
         sort_combo.pack(side="left")
-        sort_combo.bind("<<ComboboxSelected>>", lambda _: self._refresh_table())
+        sort_combo.bind("<<ComboboxSelected>>", self._on_dashboard_sort_change)
 
         ttk.Label(flt, text="↑ higher = better", style="Muted.TLabel").pack(side="left", padx=6)
         ttk.Button(flt, text="⟳ Recalculate", style="Dark.TButton",
@@ -1221,10 +1260,12 @@ class App(tk.Tk):
         cols = [c[1] for c in COL_DEFS]
         self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings", selectmode="browse")
 
+        saved_dash_w = self._prefs["col_widths"]["dashboard"]
         for label, key, width, anchor in COL_DEFS:
             self.tree.heading(key, text=label,
                               command=lambda k=key: self._sort_by(k))
-            self.tree.column(key, width=width, anchor=anchor, stretch=False)
+            self.tree.column(key, width=saved_dash_w.get(key, width),
+                             anchor=anchor, stretch=False)
 
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
@@ -1241,6 +1282,7 @@ class App(tk.Tk):
         self.tree.tag_configure("alloy",  foreground=ACCENT2)
         self.tree.tag_configure("item",   foreground="#c0a0ff")
         self.tree.tag_configure("bad",    foreground=BAD)
+        self.tree.bind("<ButtonRelease-1>", self._on_dashboard_resize)
 
         # legend / footer
         leg = ttk.Frame(frame, style="Dark.TFrame", padding=(8, 2))
@@ -1591,10 +1633,10 @@ class App(tk.Tk):
         tb = ttk.Frame(frame, style="Dark.TFrame")
         tb.pack(fill="x", pady=(0, 6))
         ttk.Label(tb, text="Sort by:", style="Dark.TLabel").pack(side="left", padx=(0, 6))
-        self._proj_sort_var = tk.StringVar(value="name")
+        self._proj_sort_var = tk.StringVar(value=self._prefs["sort"]["projects_sort"])
         for val, label in (("name", "Name"), ("cost", "Cost"), ("time", "Time")):
             ttk.Radiobutton(tb, text=label, variable=self._proj_sort_var, value=val,
-                            command=self._refresh_projects,
+                            command=self._on_proj_sort_change,
                             style="Dark.TLabel").pack(side="left", padx=4)
         ttk.Button(tb, text="⟳ Refresh", style="Dark.TButton",
                    command=self._refresh_projects).pack(side="left", padx=8)
@@ -1619,12 +1661,13 @@ class App(tk.Tk):
         self._proj_tree.heading("prereq",         text="Prereq")
         self._proj_tree.heading("recipe_display", text="Ingredients")
 
-        self._proj_tree.column("researched",     width=55,  anchor="center", stretch=False)
-        self._proj_tree.column("name",           width=220, anchor="w",      stretch=False)
-        self._proj_tree.column("cost",           width=120, anchor="e",      stretch=False)
-        self._proj_tree.column("time",           width=100, anchor="e",      stretch=False)
-        self._proj_tree.column("prereq",         width=200, anchor="w",      stretch=False)
-        self._proj_tree.column("recipe_display", width=500, anchor="w",      stretch=True)
+        _pw = self._prefs["col_widths"]["projects"]
+        self._proj_tree.column("researched",     width=_pw.get("researched",     55),  anchor="center", stretch=False)
+        self._proj_tree.column("name",           width=_pw.get("name",           293), anchor="w",      stretch=False)
+        self._proj_tree.column("cost",           width=_pw.get("cost",           113), anchor="e",      stretch=False)
+        self._proj_tree.column("time",           width=_pw.get("time",           100), anchor="e",      stretch=False)
+        self._proj_tree.column("prereq",         width=_pw.get("prereq",         200), anchor="w",      stretch=False)
+        self._proj_tree.column("recipe_display", width=_pw.get("recipe_display", 500), anchor="w",      stretch=True)
 
         vsb = ttk.Scrollbar(proj_tree_frame, orient="vertical",   command=self._proj_tree.yview)
         hsb = ttk.Scrollbar(proj_tree_frame, orient="horizontal", command=self._proj_tree.xview)
@@ -1643,8 +1686,8 @@ class App(tk.Tk):
         self._proj_tree.tag_configure("locked",     foreground="#555570")
         self._proj_tree.tag_configure("researched", foreground=ACCENT2)
 
-        # clicking the Researched column toggles
-        self._proj_tree.bind("<ButtonRelease-1>", self._proj_tree_click)
+        # clicking the Researched column toggles; ButtonRelease also saves col widths
+        self._proj_tree.bind("<ButtonRelease-1>", self._on_proj_tree_click_and_resize)
 
         self._refresh_projects()
 
@@ -1709,6 +1752,8 @@ class App(tk.Tk):
 
     def _proj_sort(self, key: str):
         self._proj_sort_var.set(key)
+        self._prefs["sort"]["projects_sort"] = key
+        save_prefs(self._prefs)
         self._refresh_projects()
 
     def _proj_tree_click(self, event):
@@ -1781,6 +1826,8 @@ class App(tk.Tk):
 
     def _sort_by(self, key: str):
         self._sort_var.set(key)
+        self._prefs["sort"]["dashboard_sort"] = key
+        save_prefs(self._prefs)
         self._refresh_table()
 
 
@@ -1810,17 +1857,18 @@ class App(tk.Tk):
         self._planet_tree = ttk.Treeview(pf, columns=pcols,
                                          show="headings", selectmode="browse")
 
+        _plw = self._prefs["col_widths"]["planets"]
         col_defs = [
             ("num",      "#",          40, "center"),
             ("name",     "Planet",    120, "w"),
-            ("telescope","Scope",      50, "center"),
-            ("unlocked", "Owned",      55, "center"),
+            ("telescope","Scope",      62, "center"),
+            ("unlocked", "Owned",      72, "center"),
             ("ores",     "Ores",      220, "w"),
-            ("mlvl",     "M.Lvl",      55, "center"),
+            ("mlvl",     "M.Lvl",      81, "center"),
             ("mining",   "Mining/s",   85, "e"),
-            ("slvl",     "S.Lvl",      55, "center"),
+            ("slvl",     "S.Lvl",      81, "center"),
             ("speed",    "Speed",      70, "e"),
-            ("clvl",     "C.Lvl",      55, "center"),
+            ("clvl",     "C.Lvl",      81, "center"),
             ("cargo",    "Cargo",      60, "e"),
             ("probe_m",  "Prb Mng",    70, "e"),
             ("probe_s",  "Prb Spd",    70, "e"),
@@ -1831,7 +1879,8 @@ class App(tk.Tk):
         ]
         for cid, label, width, anchor in col_defs:
             self._planet_tree.heading(cid, text=label)
-            self._planet_tree.column(cid, width=width, anchor=anchor, stretch=False)
+            self._planet_tree.column(cid, width=_plw.get(cid, width),
+                                     anchor=anchor, stretch=False)
 
         vsb = ttk.Scrollbar(pf, orient="vertical",   command=self._planet_tree.yview)
         hsb = ttk.Scrollbar(pf, orient="horizontal", command=self._planet_tree.xview)
@@ -1847,9 +1896,9 @@ class App(tk.Tk):
         self._planet_tree.tag_configure("locked",   foreground="#555570")
         self._planet_tree.tag_configure("owned",    foreground=TEXT)
 
-        # double-click to edit level/bonus; single-click col 4 to toggle owned
-        self._planet_tree.bind("<Double-1>",      self._planet_tree_edit)
-        self._planet_tree.bind("<ButtonRelease-1>", self._planet_tree_click)
+        # double-click to edit; single-click col 4 to toggle owned; save col widths on release
+        self._planet_tree.bind("<Double-1>",        self._planet_tree_edit)
+        self._planet_tree.bind("<ButtonRelease-1>", self._on_planet_tree_click_and_resize)
 
         self._refresh_planets()
 
@@ -2030,6 +2079,44 @@ class App(tk.Tk):
         ent.bind("<Return>",   commit)
         ent.bind("<FocusOut>", commit)
         ent.bind("<Escape>",   lambda e: ent.destroy())
+
+    # ── preferences ───────────────────────────────────────────────────────────
+    def _save_pref(self, section: str, key: str, value):
+        self._prefs[section][key] = value
+        save_prefs(self._prefs)
+
+    def _on_tree_resize(self, tree, tree_name: str):
+        """Snapshot current column widths and persist."""
+        widths = {col: tree.column(col, "width") for col in tree["columns"]}
+        self._prefs["col_widths"][tree_name] = widths
+        save_prefs(self._prefs)
+
+    # Named handlers — avoid lambda/closure issues with tkinter event dispatch
+    def _on_dashboard_filter_change(self):
+        self._prefs["sort"]["dashboard_filter"] = self._filter_var.get()
+        save_prefs(self._prefs)
+        self._refresh_table()
+
+    def _on_dashboard_sort_change(self, _event=None):
+        self._prefs["sort"]["dashboard_sort"] = self._sort_var.get()
+        save_prefs(self._prefs)
+        self._refresh_table()
+
+    def _on_dashboard_resize(self, _event=None):
+        self._on_tree_resize(self.tree, "dashboard")
+
+    def _on_proj_sort_change(self):
+        self._prefs["sort"]["projects_sort"] = self._proj_sort_var.get()
+        save_prefs(self._prefs)
+        self._refresh_projects()
+
+    def _on_proj_tree_click_and_resize(self, event):
+        self._proj_tree_click(event)
+        self._on_tree_resize(self._proj_tree, "projects")
+
+    def _on_planet_tree_click_and_resize(self, event):
+        self._planet_tree_click(event)
+        self._on_tree_resize(self._planet_tree, "planets")
 
     # ── save / reset ──────────────────────────────────────────────────────────
     def _save(self):
