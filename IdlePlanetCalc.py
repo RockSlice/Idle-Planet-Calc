@@ -289,6 +289,13 @@ def load_data() -> dict:
             v["unlocked"] = (v.get("Telescope", 99) == 0)
         fixed[ik] = v
     tempData["planets"] = fixed
+    # Ensure global bonus dict exists
+    g = tempData.setdefault("globals", {})
+    g.setdefault("mining",      1.0)
+    g.setdefault("speed",       1.0)
+    g.setdefault("cargo",       1.0)
+    g.setdefault("smelt_speed", 1.0)
+    g.setdefault("craft_speed", 1.0)
     return tempData
 
 
@@ -331,9 +338,10 @@ def effective_time(name: str, data: dict) -> float:
     return 0.0
 
 def total_smelt_time_of_recipe(name: str, category: str, data: dict) -> float:
-    """Recursive sum of all alloy smelt_times needed for this recipe (raw seconds)."""
+    """Recursive sum of all alloy smelt_times, divided by global smelt speed."""
     entry = data[category][name]
-    total = entry["smelt_time"] if category == "alloys" else 0.0
+    own   = (entry["smelt_time"] if category == "alloys" else 0.0)
+    total = own / max(0.001, global_smelt_speed(data))
     for ingredient, qty in entry.get("recipe", {}).items():
         if ingredient in data["alloys"]:
             total += total_smelt_time_of_recipe(ingredient, "alloys", data) * qty
@@ -343,9 +351,10 @@ def total_smelt_time_of_recipe(name: str, category: str, data: dict) -> float:
 
 
 def total_craft_time_of_recipe(name: str, category: str, data: dict) -> float:
-    """Recursive sum of all item craft_times needed for this recipe (raw seconds)."""
+    """Recursive sum of all item craft_times, divided by global craft speed."""
     entry = data[category][name]
-    total = entry["craft_time"] if category == "items" else 0.0
+    own   = (entry["craft_time"] if category == "items" else 0.0)
+    total = own / max(0.001, global_craft_speed(data))
     for ingredient, qty in entry.get("recipe", {}).items():
         if ingredient in data["alloys"]:
             total += total_craft_time_of_recipe(ingredient, "alloys", data) * qty
@@ -506,8 +515,10 @@ def ore_mining_rate(ore: str, data: dict) -> float:
         if pct == 0:
             continue
         lvl     = planet["Levels"]["Mining"]
-        # combined bonus = probe[0] * colony[0]
-        bonus   = planet.get("probes", [1,1,1])[0] * planet.get("colony", [1,1,1])[0]
+        # combined bonus = probe[0] * colony[0] * global
+        bonus   = (planet.get("probes", [1,1,1])[0]
+                   * planet.get("colony", [1,1,1])[0]
+                   * global_mining_bonus(data))
         rate    = mining_rate(lvl, bonus)
         total  += rate * (pct / 100.0)
     return total
@@ -535,6 +546,53 @@ def ship_cargo(level: int, bonus: float = 1) -> int:
     return cargo
     
 
+# ── global bonus helpers ─────────────────────────────────────────────────────
+# These functions centralise bonus lookup so future bonus sources
+# (projects, colonies, etc.) can be added in one place.
+
+def global_mining_bonus(data: dict) -> float:
+    """Combined global mining rate multiplier."""
+    g = data.get("globals", {})
+    # TODO: add project / colony bonuses here
+    gmb = float(g.get("mining", 1.0))
+    if data["projects"]["Advanced Mining"]["Researched"]:
+        gmb = gmb * 1.25
+    if data["projects"]["Superior Mining"]["Researched"]:
+        gmb = gmb * 1.25
+    return gmb
+
+def global_speed_bonus(data: dict) -> float:
+    """Combined global ship speed multiplier."""
+    g = data.get("globals", {})
+    gsb = float(g.get("speed", 1.0))
+    if data["projects"]["Advanced Thrusters"]["Researched"]:
+        gsb = gsb * 1.25
+    if data["projects"]["Superior Thrusters"]["Researched"]:
+        gsb = gsb * 1.25
+    
+    return gsb
+
+def global_cargo_bonus(data: dict) -> float:
+    """Combined global ship cargo multiplier."""
+    g = data.get("globals", {})
+    gcb = float(g.get("cargo", 1.0))
+    if data["projects"]["Advanced Cargo Handling"]["Researched"]:
+        gcb = gcb * 1.25
+    if data["projects"]["Superior Cargo Handling"]["Researched"]:
+        gcb = gcb * 1.25
+    return gcb
+
+def global_smelt_speed(data: dict) -> float:
+    """Combined global smelt speed multiplier (higher = faster)."""
+    g = data.get("globals", {})
+    return float(g.get("smelt_speed", 1.0))
+
+def global_craft_speed(data: dict) -> float:
+    """Combined global craft speed multiplier (higher = faster)."""
+    g = data.get("globals", {})
+    return float(g.get("craft_speed", 1.0))
+
+
 # ── number formatting ─────────────────────────────────────────────────────────
 SUFFIXES = [
     (1e33, "D"),  (1e30, "N"),  (1e27, "O"),  (1e24, "Sp"),
@@ -552,6 +610,27 @@ def fmt(n: float, dp: int = 2) -> str:
             val = round(n / threshold, dp)
             return f"{'−' if neg else ''}${val:.1f}{suffix}"
     return f"{'−' if neg else ''}${round(n, dp):.2f}"
+    
+def format_time(s: float) -> str:
+    d = 0
+    h = 0
+    m = 0
+    timeStr = ""
+    if s >= 60:
+        m, s = list(map(int,divmod(s, 60)))
+        if m >= 60:
+            h, m = list(map(int,divmod(m, 60)))
+            if h >= 24:
+                d, h = list(map(int,divmod(h, 24)))
+                timeStr = f"{d}d{h:0>2d}h"
+            else:
+                timeStr = f"{h}h{m:0>2d}m"
+        else:
+            timeStr = f"{m}m{s:0>2d}s"
+    else:
+        timeStr = f"{s:.1f}s"
+    return timeStr
+    
 
 def get_price(inStr:str) -> float:
     if inStr == '':
@@ -1232,16 +1311,83 @@ class App(tk.Tk):
         save_data(self.data)
         self._refresh_table()
 
+
+    def _make_bonus_widget(self, tb, key: str, label: str,
+                           compute_fn, accent=None):
+        """Build a compact  Label: [computed] Manual: [entry]  strip in toolbar tb."""
+        color = accent or ACCENT2
+        ttk.Label(tb, text=f"{label}:", style="Muted.TLabel").pack(side="left", padx=(10, 2))
+        # computed display (read-only)
+        comp_var = tk.StringVar()
+        def _update_comp(*_):
+            comp_var.set(f"×{compute_fn(self.data):.3f}")
+        _update_comp()
+        ttk.Label(tb, textvariable=comp_var, foreground=color,
+                  background=DARK_BG, font=REG_FONT, width=8).pack(side="left")
+        ttk.Label(tb, text="Manual:", style="Muted.TLabel").pack(side="left", padx=(4, 2))
+        man_var = tk.StringVar(value=str(self.data.get("globals", {}).get(key, 1.0)))
+        ent = tk.Entry(tb, textvariable=man_var, bg=ENTRY_BG, fg=TEXT,
+                       insertbackground=TEXT, relief="flat",
+                       font=REG_FONT, width=6)
+        ent.pack(side="left")
+        def _commit(*_):
+            try:
+                val = float(man_var.get())
+                if val <= 0:
+                    val = 1.0
+                self.data.setdefault("globals", {})[key] = val
+                man_var.set(str(val))
+                _update_comp()
+                save_data(self.data)
+                self._refresh_table()
+                # Refresh time columns in alloy/item grids (lightweight)
+                self._refresh_alloy_times()
+                self._refresh_item_times()
+                if hasattr(self, "_planet_tree"):
+                    self._refresh_planets()
+            except ValueError:
+                man_var.set(str(self.data.get("globals", {}).get(key, 1.0)))
+        ent.bind("<Return>",   _commit)
+        ent.bind("<FocusOut>", _commit)
+        # also store update fn so we can refresh all displays
+        if not hasattr(self, "_bonus_update_fns"):
+            self._bonus_update_fns = []
+        self._bonus_update_fns.append(_update_comp)
+
+    def _refresh_alloy_times(self):
+        """Recompute bonus-adjusted smelt time col (col 3) without a full commit."""
+        if not hasattr(self, "_alloy_grid"):
+            return
+        spd = max(0.001, global_smelt_speed(self.data))
+        for row in self._alloy_grid._data:
+            name = str(row[1]).strip()
+            raw_t = self.data["alloys"].get(name, {}).get("smelt_time")
+            if raw_t is not None:
+                row[3] = format_time(raw_t / spd)
+        self._alloy_grid._redraw()
+
+    def _refresh_item_times(self):
+        """Recompute bonus-adjusted craft time col (col 3) without a full commit."""
+        if not hasattr(self, "_item_grid"):
+            return
+        spd = max(0.001, global_craft_speed(self.data))
+        for row in self._item_grid._data:
+            name = str(row[1]).strip()
+            raw_t = self.data["items"].get(name, {}).get("craft_time")
+            if raw_t is not None:
+                row[3] = format_time(raw_t / spd)
+        self._item_grid._redraw()
+
     # ── tab: alloys ───────────────────────────────────────────────────────────
     def _tab_alloys(self, nb):
         frame = ttk.Frame(nb, style="Dark.TFrame", padding=8)
         nb.add(frame, text="⚙️  Alloys")
-        # 0=Unlocked 1=Name 2=BasePrice 3=SmeltTime 4=Stars 5=Market 6=RealPrice 7..=recipe
+        # 0=Unlocked 1=Name 2=BasePrice 3=SmeltTime(adj,ro) 4=Stars 5=Market 6=RealPrice 7..=recipe
         cols = [
             ("Unlocked",       80,  "w"),
             ("Name",          160,  "w"),
             ("Base Price ($)", 100,  "e"),
-            ("Smelt Time (s)", 100,  "e"),
+            ("Smelt Time (s)", 100,  "e"),  # readonly: shows bonus-adjusted value
             ("Stars",           60,  "e"),
             ("Market",         110,  "w"),
             ("Real Price ($)", 110,  "e"),
@@ -1265,12 +1411,15 @@ class App(tk.Tk):
             ttk.Button(tb, text="+", style="Dark.TButton", width=2,
                        command=lambda: (self._smelters.set(self._smelters.get()+1),
                                         self._refresh_table())).pack(side="left")
+            ttk.Separator(tb, orient="vertical").pack(side="left", fill="y", padx=8)
+            self._make_bonus_widget(tb, "smelt_speed", "Smelt Speed",
+                                    global_smelt_speed, accent=ACCENT2)
         grid = SpreadsheetGrid(frame, cols, accent=ACCENT2,
                                on_change=lambda: self._commit_alloys(grid),
                                dropdown_cols=dropdown_cols,
                                checkbox_cols={0},
                                slider_cols={5: (-2, 4)},
-                               readonly_cols={6},
+                               readonly_cols={3, 6},  # 3=adj smelt time, 6=real price
                                extra_widgets=[_smelter_widget])
         grid.pack(fill="both", expand=True)
         for name, entry in self.data["alloys"].items():
@@ -1278,9 +1427,11 @@ class App(tk.Tk):
             stars = entry.get("stars", 0)
             mkt   = entry.get("market", 0)
             rp    = getRealPrice(bp, stars, mkt)
+            raw_t = entry.get("smelt_time", 60)
+            adj_t = raw_t / max(0.001, global_smelt_speed(self.data))
             recipe_items = list(entry.get("recipe", {}).items())
             row = [entry.get("unlocked", False), name,
-                   fmt(bp), f"{int(entry.get('smelt_time', 60))}s",
+                   fmt(bp), format_time(adj_t),
                    stars, mkt, fmt(rp)]
             for i in range(3):
                 if i < len(recipe_items):
@@ -1301,16 +1452,16 @@ class App(tk.Tk):
                 price = get_price(row[2])
             except (ValueError, IndexError):
                 price = 0.0
-            try:
-                t = float(re.search(r'\d+', row[3])[0])
-            except (TypeError, ValueError, IndexError):
-                t = 999999
+            # col 3 is readonly (shows adjusted time) — read raw from existing data
+            t = self.data["alloys"].get(name, {}).get("smelt_time", 999999)
             try:    stars  = int(float(row[4]))
             except: stars  = 0
             try:    market = int(float(row[5]))
             except: market = 0
-            rp = getRealPrice(price, stars, market, "alloys")
-            row[6] = fmt(rp)   # write directly into grid._data → redraws correctly
+            rp    = getRealPrice(price, stars, market, "alloys")
+            adj_t = t / max(0.001, global_smelt_speed(self.data))
+            row[3] = f"{adj_t:.1f}s"  # keep display fresh
+            row[6] = fmt(rp)
             recipe = {}
             for slot in range(3):
                 base = 7 + slot * 2
@@ -1321,7 +1472,7 @@ class App(tk.Tk):
                         recipe[ing] = qty
                 except (ValueError, IndexError):
                     pass
-            new_alloys[name] = {"base_price": price, "smelt_time": t,
+            new_alloys[name] = {"base_price": price, "smelt_time": int(t),
                                 "recipe": recipe, "unlocked": unlocked,
                                 "stars": stars, "market": market, "realPrice": rp}
         self.data["alloys"] = new_alloys
@@ -1332,12 +1483,12 @@ class App(tk.Tk):
     def _tab_items(self, nb):
         frame = ttk.Frame(nb, style="Dark.TFrame", padding=8)
         nb.add(frame, text="📦  Items")
-        # 0=Unlocked 1=Name 2=BasePrice 3=CraftTime 4=Stars 5=Market 6=RealPrice 7..=recipe
+        # 0=Unlocked 1=Name 2=BasePrice 3=CraftTime(adj,ro) 4=Stars 5=Market 6=RealPrice 7..=recipe
         cols = [
             ("Unlocked",       80,  "w"),
             ("Name",          160,  "w"),
             ("Base Price ($)", 130,  "e"),
-            ("Craft Time",     80,  "e"),
+            ("Craft Time",     80,  "e"),  # readonly: shows bonus-adjusted value
             ("Stars",           60,  "e"),
             ("Market",         110,  "w"),
             ("Real Price ($)", 110,  "e"),
@@ -1363,12 +1514,15 @@ class App(tk.Tk):
             ttk.Button(tb, text="+", style="Dark.TButton", width=2,
                        command=lambda: (self._crafters.set(self._crafters.get()+1),
                                         self._refresh_table())).pack(side="left")
+            ttk.Separator(tb, orient="vertical").pack(side="left", fill="y", padx=8)
+            self._make_bonus_widget(tb, "craft_speed", "Craft Speed",
+                                    global_craft_speed, accent="#c0a0ff")
         grid = SpreadsheetGrid(frame, cols, accent="#c0a0ff",
                                on_change=lambda: self._commit_items(grid),
                                dropdown_cols=dropdown_cols,
                                checkbox_cols={0},
                                slider_cols={5: (-2, 4)},
-                               readonly_cols={6},
+                               readonly_cols={3, 6},  # 3=adj craft time, 6=real price
                                extra_widgets=[_crafter_widget])
         grid.pack(fill="both", expand=True)
         for name, entry in self.data["items"].items():
@@ -1376,9 +1530,11 @@ class App(tk.Tk):
             stars = entry.get("stars", 0)
             mkt   = entry.get("market", 0)
             rp    = getRealPrice(bp, stars, mkt)
+            raw_t = entry.get("craft_time", 120)
+            adj_t = raw_t / max(0.001, global_craft_speed(self.data))
             recipe_items = list(entry.get("recipe", {}).items())
             row = [entry.get("unlocked", False), name,
-                   fmt(bp), f"{int(entry.get('craft_time', 120))}s",
+                   fmt(bp), format_time(adj_t),
                    stars, mkt, fmt(rp)]
             for i in range(3):
                 if i < len(recipe_items):
@@ -1399,16 +1555,16 @@ class App(tk.Tk):
                 price = get_price(row[2])
             except (ValueError, IndexError):
                 price = 0
-            try:
-                t = float(re.search(r'\d+', row[3])[0])
-            except (TypeError, ValueError, IndexError):
-                t = 9999999
+            # col 3 is readonly (shows adjusted time) — read raw from existing data
+            t = self.data["items"].get(name, {}).get("craft_time", 9999999)
             try:    stars  = int(float(row[4]))
             except: stars  = 0
             try:    market = int(float(row[5]))
             except: market = 0
-            rp = getRealPrice(price, stars, market, "items")
-            row[6] = fmt(rp)   # write directly into grid._data → redraws correctly
+            rp    = getRealPrice(price, stars, market, "items")
+            adj_t = t / max(0.001, global_craft_speed(self.data))
+            row[3] = f"{adj_t:.1f}s"  # keep display fresh
+            row[6] = fmt(rp)
             recipe = {}
             for slot in range(3):
                 base = 7 + slot * 2
@@ -1639,6 +1795,9 @@ class App(tk.Tk):
         tb.pack(fill="x", pady=(0, 6))
         ttk.Label(tb, text="Click Owned to toggle  ·  Click −/+ on level cells to adjust  ·  Double-click bonuses to edit",
                   style="Muted.TLabel").pack(side="left", padx=4)
+        self._make_bonus_widget(tb, "mining", "Mining Rate", global_mining_bonus)
+        self._make_bonus_widget(tb, "speed",  "Ship Speed",  global_speed_bonus)
+        self._make_bonus_widget(tb, "cargo",  "Ship Cargo",  global_cargo_bonus)
 
         # ── treeview ──────────────────────────────────────────────────────────
         pf = ttk.Frame(frame, style="Dark.TFrame")
@@ -1723,9 +1882,9 @@ class App(tk.Tk):
             clvl    = p["Levels"]["Cargo"]
             probe   = p.get("probes",  [1, 1, 1])
             colony  = p.get("colony",  [1, 1, 1])
-            mb      = probe[0] * colony[0]
-            sb      = probe[1] * colony[1]
-            cb      = probe[2] * colony[2]
+            mb      = probe[0] * colony[0] * global_mining_bonus(self.data)
+            sb      = probe[1] * colony[1] * global_speed_bonus(self.data)
+            cb      = probe[2] * colony[2] * global_cargo_bonus(self.data)
             mrate   = mining_rate(mlvl, mb)
             speed   = ship_speed(slvl, sb)
             cargo   = ship_cargo(clvl, cb)
