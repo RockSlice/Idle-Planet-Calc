@@ -1,2220 +1,1128 @@
 """
-Idle Planet Miner - Recipe Value Calculator
-Calculates value/second for smelting and crafting recipes,
-comparing output value vs input costs and vs raw ore value.
+Idle Planet Miner – Recipe Value Calculator  (Dear PyGui rewrite)
 
-Data is persisted in ipm_data.json in the same folder as this script.
+Files (all in same folder as this script):
+  ipm_base.json   – static reference data: recipes, base prices, planet defs
+                    Never written by the app.
+  ipm_state.json  – mutable game state: unlocks, levels, market, stars, bonuses
+  ipm_prefs.json  – UI preferences: sort choices
 """
 
-import json
-import os
-import sys
-import re
-import tkinter as tk
-from tkinter import ttk, messagebox, font as tkfont
+import json, os, re, copy
+import dearpygui.dearpygui as dpg
 
-# ── path helpers ─────────────────────────────────────────────────────────────
+# ── paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE   = os.path.join(SCRIPT_DIR, "ipm_data.json")
-PREFS_FILE  = os.path.join(SCRIPT_DIR, "ipm_prefs.json")
+BASE_FILE  = os.path.join(SCRIPT_DIR, "ipm_base.json")
+STATE_FILE = os.path.join(SCRIPT_DIR, "ipm_state.json")
+PREFS_FILE = os.path.join(SCRIPT_DIR, "ipm_prefs.json")
 
-# ── default seed data ─────────────────────────────────────────────────────────
-DEFAULT_DATA = {
-    "ores": {
-        "Copper":    {"base_price": 1, "unlocked":True},
-        "Iron":      {"base_price": 2, "unlocked":False},
-        "Lead":      {"base_price": 4, "unlocked":False},
-        "Silicon":   {"base_price": 8, "unlocked":False},
-        "Aluminum":  {"base_price": 17, "unlocked":False},
-        "Silver":    {"base_price": 36, "unlocked":False},
-        "Gold":      {"base_price": 75, "unlocked":False},
-        "Diamond":   {"base_price": 160, "unlocked":False},
-        "Platinum":  {"base_price": 340, "unlocked":False},
-        "Titanium":  {"base_price": 730, "unlocked":False},
-        "Iridium":   {"base_price": 1600, "unlocked":False},
-        "Palladium": {"base_price": 3500, "unlocked":False},
-        "Osmium":    {"base_price": 7800, "unlocked":False},
-        "Rhodium":   {"base_price": 17500, "unlocked":False},
-        "Inerton":   {"base_price": 40000, "unlocked":False},
-        "Quadium":   {"base_price": 92000, "unlocked":False},
-        "Scrith":    {"base_price": 215000, "unlocked":False},
-        "Uru":       {"base_price": 510000, "unlocked":False},
-        "Vibranium": {"base_price": 1250000, "unlocked":False},
-        "Aether":    {"base_price": 3200000, "unlocked":False},
-        "Viterium":  {"base_price": 9000000, "unlocked":False},
-        "Xynium":    {"base_price": 28000000, "unlocked":False},
-        "Quolium":   {"base_price": 90000000, "unlocked":False},
-        "Luterium":  {"base_price": 300000000, "unlocked":False},
-        "Wraith":    {"base_price": 1100000000, "unlocked":False},
-        "Aqualite":  {"base_price": 4300000000, "unlocked":False},
-        "Opalite":   {"base_price": 18000000000, "unlocked":False},
-    },
-    "alloys": {
-        "Copper Bar":     {"base_price": 1450,     "smelt_time": 20,  "recipe": {"Copper": 1000}, "unlocked":False},
-        "Iron Bar":       {"base_price": 3000,     "smelt_time": 30,  "recipe": {"Iron": 1000}, "unlocked":False},
-        "Lead Bar":       {"base_price": 6100,     "smelt_time": 40,  "recipe": {"Lead": 1000}, "unlocked":False},
-        "Silicon Bar":    {"base_price": 12500,    "smelt_time": 60,  "recipe": {"Silicon": 1000}, "unlocked":False},
-        "Aluminum Bar":   {"base_price": 27600,    "smelt_time": 80,  "recipe": {"Aluminum": 1000}, "unlocked":False},
-        "Silver Bar":     {"base_price": 60000,    "smelt_time": 120,  "recipe": {"Silver": 1000}, "unlocked":False},
-        "Gold Bar":       {"base_price": 120000,   "smelt_time": 180,  "recipe": {"Gold": 1000}, "unlocked":False},
-        "Bronze Bar":     {"base_price": 234000,   "smelt_time": 240,  "recipe": {"Silver Bar": 2,"Copper Bar": 10}, "unlocked":False},
-        "Steel Bar":      {"base_price": 340000,   "smelt_time": 480,  "recipe": {"Iron Bar": 15, "Lead Bar": 15}, "unlocked":False},
-        "Platinum Bar":   {"base_price": 780000,   "smelt_time": 600,  "recipe": {"Gold Bar": 2,"Platinum":1000}, "unlocked":False},
-        "Titanium Bar":   {"base_price": 1630000,  "smelt_time": 720,  "recipe": {"Bronze Bar":2,"Titanium": 1000}, "unlocked":False},
-        "Iridium Bar":    {"base_price": 3110000,  "smelt_time": 840,  "recipe": {"Steel Bar": 2, "Iridium":1000}, "unlocked":False},
-        "Palladium Bar":  {"base_price": 7000000,  "smelt_time": 960,  "recipe": {"Platinum Bar": 2, "Palladium":1000}, "unlocked":False},
-        "Osmium Bar":     {"base_price": 14500000, "smelt_time": 1080,  "recipe": {"Titanium Bar": 2, "Osmium": 1000}, "unlocked":False},
-        "Rhodium Bar":    {"base_price": 31000000, "smelt_time": 1200,  "recipe": {"Iridium Bar": 2, "Rhodium": 1000}, "unlocked":False},
-        "Inerton Alloy":  {"base_price": 68000000, "smelt_time": 1440,  "recipe": {"Palladium Bar": 2, "Inerton": 1000}, "unlocked":False},
-    },
-    "items": {
-        "Copper Wire":       {"base_price": 10000,        "craft_time": 60,    "recipe": {"Copper Bar": 5}, "unlocked":False},
-        "Iron Nail":         {"base_price": 20000,        "craft_time": 120,   "recipe": {"Iron Bar": 5}, "unlocked":False},
-        "Battery":           {"base_price": 70000,        "craft_time": 240,   "recipe": {"Copper Wire": 2, "Copper Bar": 10}, "unlocked":False},
-        "Hammer":            {"base_price": 135000,       "craft_time": 480,   "recipe": {"Iron Nail": 2, "Lead Bar": 5}, "unlocked":False},
-        "Glass":             {"base_price": 220000,       "craft_time": 720,   "recipe": {"Silicon Bar": 10}, "unlocked":False},
-        "Circuit":           {"base_price": 620000,       "craft_time": 1200,  "recipe": {"Silicon Bar": 5, "Aluminum Bar": 5, "Copper Wire": 10}, "unlocked":False},
-        "Lens":              {"base_price": 1100000,      "craft_time": 2400,  "recipe": {"Glass": 1, "Silver Bar": 5}, "unlocked":False},
-        "Laser":             {"base_price": 3200000,      "craft_time": 3600,  "recipe": {"Gold Bar": 5, "Lens": 1, "Iron Bar": 10}, "unlocked":False},
-		"Basic Computer":    {"base_price": 7600000,      "craft_time": 4800,  "recipe": {"Circuit":5,"Silver Bar":5},"unlocked":False},
-		"Solar Panel":       {"base_price": 12500000,     "craft_time": 6000,  "recipe": {"Circuit":5,"Glass":10},"unlocked":False},
-		"Laser Torch":       {"base_price": 31000000,     "craft_time": 7200,  "recipe": {"Bronze Bar":5,"Laser":2,"Lens":5},"unlocked":False},
-		"Advanced Battery":  {"base_price": 35000000,     "craft_time": 9000,  "recipe": {"Steel Bar":20,"Battery":30},"unlocked":False},
-		"Thermal Scanner":   {"base_price": 71500000,     "craft_time": 10800, "recipe": {"Platinum Bar":5,"Laser":2,"Glass":5},"unlocked":False},
-		"Advanced Computer": {"base_price": 180000000,    "craft_time": 12600, "recipe": {"Titanium Bar":5,"Basic Computer":5},"unlocked":False},
-		"Navigation Module": {"base_price": 1000000000,   "craft_time": 13500, "recipe": {"Thermal Scanner":1,"Laser Torch":2},"unlocked":False},
-		"Plasma Torch":      {"base_price": 1150000000,   "craft_time": 15000, "recipe": {"Iridium Bar":15,"Laser Torch":5},"unlocked":False},
-		"Radio Tower":       {"base_price": 1450000000,   "craft_time": 15600, "recipe": {"Platinum Bar":75,"Aluminum Bar":150,"Titanium Bar":50},"unlocked":False},
-		"Telescope":         {"base_price": 2700000000,   "craft_time": 16800, "recipe": {"Lens":20,"Advanced Computer":1},"unlocked":False},
-		"Satellite Dish":    {"base_price": 3400000000,   "craft_time": 18000, "recipe": {"Steel Bar":150,"Palladium Bar":30},"unlocked":False},
-		"Motor":             {"base_price": 7000000000,   "craft_time": 19200, "recipe": {"Bronze Bar":500,"Hammer":200},"unlocked":False},
-		"Accumulator":       {"base_price": 12000000000,  "craft_time": 20400, "recipe": {"Osmium Bar":20,"Advanced Battery":3},"unlocked":False},
-		"Nuclear Capsule":   {"base_price": 26000000000,  "craft_time": 21000, "recipe": {"Rhodium Bar":5,"Plasma Torch":1},"unlocked":False},
-		"Wind Turbine":      {"base_price": 140000000000, "craft_time": 21600, "recipe": {"Aluminum Bar":300,"Motor":1},"unlocked":False}
-    },
-    "projects": {
-        "Management":                       {"Recipe": {"Copper":400,    "Iron":50},         "Prereq": "", "unlocked": True},
-        "Asteroid Miner":                   {"Recipe": {"Copper":400,    "Iron":10},         "Prereq": "", "unlocked": True},
-        "Telescope 1":                      {"Recipe": {"Iron":1500,     "Copper Bar":5},    "Prereq": "", "unlocked": True},
-        "Telescope 2":                      {"Recipe": {"Lead Bar":10,   "Silicon":500},     "Prereq": "Telescope 1"},
-        "Telescope 3":                      {"Recipe": {"Iron Nail":10, "Silicon Bar":15},   "Prereq": "Telescope 2"},
-        "Telescope 4":                      {"Recipe": {"Hammer":5,      "Aluminum Bar":20}, "Prereq": "Telescope 3"},
-        "Telescope 5":                      {"Recipe": {"Circuit":3,     "Gold Bar":10},     "Prereq": "Telescope 4"},
-        "Telescope 6":                      {"Recipe": {"Laser":3,       "Bronze Bar":25},   "Prereq": "Telescope 5"},
-        "Telescope 7":                      {"Recipe": {"Solar Panel":3, "Platinum Bar":20}, "Prereq": "Telescope 6"},
-        "Telescope 8":                      {"Recipe": {"Laser Torch":3, "Titanium Bar":10}, "Prereq": "Telescope 7"},
-        "Beacon":                           {"Recipe": {"Iron Bar":15},                      "Prereq": "Telescope 1"},
-        "Resource Details":                 {"Recipe": {"Battery":3},                        "Prereq": "Telescope 2"},
-        "Bottleneck Optimizations":         {"Recipe": {"Titanium Bar":5, "Platinum Bar":25, "Steel Bar": 50}, "Prereq": "Resource Details"},
-        "Cargo Logistics":                  {"Recipe": {"Aluminum Bar": 10, "Circuit": 3},   "Prereq": "Telescope 4"},
-        "Ore Targeting":                    {"Recipe": {"Hammer": 100, "Battery": 50},       "Prereq": "Cargo Logistics"},
-        "Advanced Ore Targeting":           {"Recipe": {"Basic Computer": 100, "Thermal Scanner": 15}, "Prereq": "Ore Targeting"},
-        "Alchemy":                          {"Recipe": {"Gold Bar": 50, "Lens": 6},          "Prereq": "Telescope 4"},
-        "Advanced Alchemy":                 {"Recipe": {"Silver": 50000, "Titanium": 25000, "Basic Computer": 6}, "Prereq": "Alchemy"},
-        "Superior Alchemy":                 {"Recipe": {"Palladium Bar": 400, "Osmium Bar": 200, "Advanced Computer": 5}, "Prereq": "Advanced Alchemy"},
-        "Asteroid Refined Drilling":        {"Recipe": {"Silicon Bar": 40, "Lead Bar": 80}, "Prereq": "Telescope 3"},
-        "Asteroid Harvester":               {"Recipe": {"Iron Bar": 400, "Circuit": 5}, "Prereq": "Asteroid Refined Drilling"},
-        "Advanced Asteroid Harvester":      {"Recipe": {"Space Probe": 1, "Plasma Torch": 50}, "Prereq": "Asteroid Harvester"},
-        "Superior Asteroid Harvester":      {"Recipe": {"Nuclear Reactor": 10, "Scrith Alloy": 300, "Inerton Alloy": 600}, "Prereq": "Advanced Asteroid Harvester"},
-        "Debris Scanner":                   {"Recipe": {"Collider": 1, "Gravity Chamber": 8}, "Prereq": "Superior Asteroid Harvester"},
-        "Smelter":                          {"Recipe": {"Copper": 600, "Iron": 250}, "Prereq": "Asteroid Miner"},
-        "Crafter":                          {"Recipe": {"Lead": 5000, "Iron Bar": 5}, "Prereq": "Smelter"},
-        "Advanced Crafter":                 {"Recipe": {"Lens": 5, "Gold Bar": 50}, "Prereq": "Crafter"},
-        "Crafting Efficiency":              {"Recipe": {"Solar Panel": 30}, "Prereq": "Advanced Crafter"},
-        "Superior Crafting":                {"Recipe": {"Thermal Scanner": 2, "Advanced Battery": 10, "Laser Torch":20}, "Prereq": ["Crafting Efficiency","Advanced Item Value"]},
-        "Advanced Item Value":              {"Recipe": {"Lens": 5, "Silver Bar": 8}, "Prereq": "Advanced Crafter"},
-        "Crafting Specialist":              {"Recipe": {"Advanced Battery": 3, "Advanced Computer": 2}, "Prereq": "Advanced Item Value"},
-        "Superior Item Value":              {"Recipe": {"Palladium Bar": 200, "Laser Torch": 25}, "Prereq": "Advanced Item Value"},
-        "Advanced Furnace":                 {"Recipe": {"Glass": 3, "Aluminum Bar": 10}, "Prereq": "Smelter"},
-        "Smelting Efficiency":              {"Recipe": {"Bronze Bar": 200, "": 8}, "Prereq": ""},
-        "Market Insight":                   {"Recipe": {"Silver Bar": 20, "Hammer": 10}, "Prereq": "Telescope 4"},
-        "Inside Trader":                    {"Recipe": {"Steel Bar": 25, "Lens": 10}, "Prereq": "Market Insight"},
-        "Market Manipulation":              {"Recipe": {"Diamond": 30000, "Gold Bar": 15000, "Basic Computer": 10}, "Prereq": "Inside Trader"},
-        "Advanced Market Manipulation":     {"Recipe": {"Quadium Alloy": 100, "Advanced Computer": 10, "Telescope": 5}, "Prereq": "Market Manipulation"},
-        "Market Accelerator":               {"Recipe": {"Iridium Bar": 400, "Motor": 1}, "Prereq": "Inside Trader"},
-        "Advanced Market Accelerator":      {"Recipe": {"Inerton Alloy": 115, "Gravity Chamber": 1}, "Prereq": "Market Accelerator"},
-        "Rover Advanced Logistics":         {"Recipe": {"Bronze Bar": 20, "Battery": 20, "Lens": 10}, "Prereq": "Telescope 5"},
-        "Rover Scanning Module":            {"Recipe": {"Aluminum Bar": 100, "Basic Computer": 1}, "Prereq": "Rover Advanced Logistics"},
-        "Rover Resupply":                   {"Recipe": {"Platinum Bar": 6, "Laser Torch": 1, "Solar Panel": 1}, "Prereq": "Rover Advanced Logistics"},
-        "Advanced Rover Resupply":          {"Recipe": {"Advanced Battery": 10, "Plasma Torch": 6, "Rhodium Bar": 25}, "Prereq": "Rover Resupply"},
-        "Manager Training":                 {"Recipe": {"Laser Torch": 1, "Steel Bar": 50}, "Prereq": "Telescope 6"},
-        "Contract Manager":                 {"Recipe": {"Titanium Bar": 25, "Circuit": 20}, "Prereq": "Manager Training"},
-        "Advanced Contract Manager":        {"Recipe": {"Advanced Computer": 10, "Thermal Scanner": 10}, "Prereq": "Contract Manager"},
-        "Advanced Manager Training":        {"Recipe": {"Advanced Computer": 2, "Advanced Battery": 10}, "Prereq": "Manager Training"},
-        "Superior Manager Training":        {"Recipe": {"Rhodium Bar": 200}, "Prereq": "Advanced Manager Training"},
-        "Specialist University":            {"Recipe": {"Inerton Alloy": 300, "Motor": 3}, "Prereq": "Advanced Manager Training"},
-        "Advanced Specialist University":   {"Recipe": {"Accumulator": 2, "Scrith Allow": 100}, "Prereq": "Specialist University"},
-        "Colonization":                     {"Recipe": {"Copper Bar": 20, "Iron Bar": 10}, "Prereq": "Management"},
-        "Colonization Scouting":            {"Recipe": {"Iron Nail": 15}, "Prereq": "Colonization"},
-        "Colonization Advanced Scouting":   {"Recipe": {"Silver Bar": 60}, "Prereq": "Colonization Scouting"},
-        "Colonization Superior Scouting":   {"Recipe": {"Diamond": 50000}, "Prereq": "Colonization Advanced Scouting"},
-        "Colonization Efficiency":          {"Recipe": {"Silver Bar": 15, "Hammer": 10}, "Prereq": "Colonization"},
-        "Colony Renegotiation":             {"Recipe": {"Bronze Bar": 100, "Hammer": 400}, "Prereq": "Colonization Efficiency"},
-        "Colonization Advanced Efficiency": {"Recipe": {"Steel Bar": 40, "Laser": 10}, "Prereq": "Colonization Efficiency"},
-        "Colonization Superior Efficiency": {"Recipe": {"Palladium Bar": 50, "Laser Torch": 15}, "Prereq": "Colonization Advanced Efficiency"},
-        "Colony Tax Incentives":            {"Recipe": {"Aluminum Bar": 60}, "Prereq": ["Colonization Scouting","Colonization Efficiency"]},
-        "Colony Advanced Tax Incentives":   {"Recipe": {"Bronze Bar": 60}, "Prereq": "Colony Tax Incentives"},
-        "Colony Superior Tax Incentives":   {"Recipe": {"Palladium Bar": 60}, "Prereq": "Colony Advanced Tax Incentives"},
-        "Rover":                            {"Recipe": {"Copper Wire": 10}, "Prereq": "Asteroid Miner"},
-        "Advanced Mining":                  {"Recipe": {"Battery": 5, "Aluminum Bar": 20}, "Prereq": "Rover"},
-        "Advanced Thrusters":               {"Recipe": {"Glass": 2, "Gold Bar": 10}, "Prereq": "Advanced Mining"},
-        "Advanced Cargo Handling":          {"Recipe": {"Hammer": 5, "Silver Bar": 25}, "Prereq": "Advanced Mining"},
-        "Superior Mining":                  {"Recipe": {"Laser Torch": 10, "Platinum Bar": 25}, "Prereq": ["Advanced Thrusters","Advanced Cargo Handling"]},
-        "Superior Thrusters":               {"Recipe": {"Advanced Battery": 4}, "Prereq": "Superior Mining"},
-        "Superior Cargo Handling":          {"Recipe": {"Titanium Bar": 50}, "Prereq": "Superior Mining"},
-#        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
-#        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
-#        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
-#        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
-#        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
-#        "Smelter":  {"Recipe": {"": 1, "": 1}, "Prereq": ""},
-    },
-    "planets": {
-        1:  {"Name": "Balor",        "BasePrice": 100,        "Telescope": 0,  "Resources": {"Copper": 100},                          "Distance": 10,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        2:  {"Name": "Drasta",       "BasePrice": 200,        "Telescope": 0,  "Resources": {"Copper": 80, "Iron": 20},                "Distance": 12,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        3:  {"Name": "Anadius",      "BasePrice": 500,        "Telescope": 0,  "Resources": {"Copper": 50, "Iron": 50},                "Distance": 14,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        4:  {"Name": "Dholen",       "BasePrice": 1250,       "Telescope": 0,  "Resources": {"Iron": 80, "Lead": 20},                  "Distance": 15,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        5:  {"Name": "Verr",         "BasePrice": 5000,       "Telescope": 1,  "Resources": {"Lead": 50, "Iron": 30, "Copper": 20},    "Distance": 16,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        6:  {"Name": "Newton",       "BasePrice": 9000,       "Telescope": 1,  "Resources": {"Lead": 100},                             "Distance": 18,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        7:  {"Name": "Widow",        "BasePrice": 15000,      "Telescope": 1,  "Resources": {"Iron": 40, "Copper": 40, "Silicon": 20}, "Distance": 20,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        8:  {"Name": "Acheron",      "BasePrice": 25000,      "Telescope": 2,  "Resources": {"Silicon": 60, "Copper": 40},             "Distance": 22,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        9:  {"Name": "Yangtze",      "BasePrice": 40000,      "Telescope": 2,  "Resources": {"Silicon": 80, "Aluminum": 20},           "Distance": 23,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        10: {"Name": "Solveig",      "BasePrice": 75000,      "Telescope": 2,  "Resources": {"Aluminum": 50, "Silicon": 30, "Lead": 20},"Distance": 25, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        11: {"Name": "Imir",         "BasePrice": 150000,     "Telescope": 3,  "Resources": {"Aluminum": 100},                         "Distance": 26,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        12: {"Name": "Relic",        "BasePrice": 250000,     "Telescope": 3,  "Resources": {"Lead": 45, "Silicon": 35, "Silver": 20}, "Distance": 28,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        13: {"Name": "Nith",         "BasePrice": 400000,     "Telescope": 3,  "Resources": {"Silver": 80, "Aluminum": 20},            "Distance": 30,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        14: {"Name": "Batalla",      "BasePrice": 800000,     "Telescope": 4,  "Resources": {"Copper": 40, "Iron": 40, "Gold": 20},    "Distance": 33,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        15: {"Name": "Micah",        "BasePrice": 1500000,    "Telescope": 4,  "Resources": {"Gold": 50, "Silver": 50},                "Distance": 35,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        16: {"Name": "Pranas",       "BasePrice": 3000000,    "Telescope": 4,  "Resources": {"Gold": 100},                             "Distance": 37,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        17: {"Name": "Castellus",    "BasePrice": 6000000,    "Telescope": 5,  "Resources": {"Aluminum": 40, "Silicon": 35, "Diamond": 25}, "Distance": 40, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        18: {"Name": "Gorgon",       "BasePrice": 12000000,   "Telescope": 5,  "Resources": {"Diamond": 80, "Lead": 20},               "Distance": 43,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        19: {"Name": "Parnitha",     "BasePrice": 25000000,   "Telescope": 5,  "Resources": {"Gold": 70, "Platinum": 30},               "Distance": 45,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        20: {"Name": "Orisoni",      "BasePrice": 50000000,   "Telescope": 6,  "Resources": {"Platinum": 70, "Diamond": 30},            "Distance": 48,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        21: {"Name": "Theseus",      "BasePrice": 100000000,  "Telescope": 6,  "Resources": {"Platinum": 100},                          "Distance": 51,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        22: {"Name": "Zelene",       "BasePrice": 200000000,  "Telescope": 6,  "Resources": {"Silver": 70, "Titanium": 30},            "Distance": 54,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        23: {"Name": "Han",          "BasePrice": 400000000,  "Telescope": 7,  "Resources": {"Titanium": 70, "Diamond": 20, "Gold": 10}, "Distance": 57, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        24: {"Name": "Strennus",     "BasePrice": 800000000,  "Telescope": 7,  "Resources": {"Titanium": 70, "Platinum": 30},           "Distance": 58,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        25: {"Name": "Osun",         "BasePrice": 1600000000, "Telescope": 7,  "Resources": {"Aluminum": 60, "Iridium": 40},           "Distance": 60,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        26: {"Name": "Ploitari",     "BasePrice": 3200000000, "Telescope": 8,  "Resources": {"Iridium": 50, "Diamond": 50},            "Distance": 63,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        27: {"Name": "Elysta",       "BasePrice": 6400000000, "Telescope": 8,  "Resources": {"Iridium": 100},                          "Distance": 67,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        28: {"Name": "Tikkun",       "BasePrice": 12500000000,"Telescope": 8,  "Resources": {"Iridium": 40, "Titanium": 35, "Palladium": 25}, "Distance": 70, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        29: {"Name": "Satent",       "BasePrice": 25000000000,"Telescope": 9,  "Resources": {"Palladium": 60, "Titanium": 40},         "Distance": 72,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        30: {"Name": "Urla Rast",    "BasePrice": 50000000000,"Telescope": 9,  "Resources": {"Palladium": 90, "Diamond": 10},          "Distance": 73,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        31: {"Name": "Vular",        "BasePrice": 100000000000,"Telescope": 9, "Resources": {"Palladium": 70, "Osmium": 30},           "Distance": 75,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        32: {"Name": "Nibiru",       "BasePrice": 250000000000,"Telescope": 10,"Resources": {"Osmium": 60, "Iridium": 40},             "Distance": 76,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        33: {"Name": "Xena",         "BasePrice": 600000000000,"Telescope": 10,"Resources": {"Osmium": 100},                           "Distance": 78,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        34: {"Name": "Rupert",       "BasePrice": 1500000000000,"Telescope":10,"Resources": {"Palladium": 55, "Osmium": 30, "Rhodium": 15}, "Distance": 78, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        35: {"Name": "Pax",          "BasePrice": 4000000000000,"Telescope":11,"Resources": {"Rhodium": 50, "Platinum": 50},            "Distance": 80,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        36: {"Name": "Ivyra",        "BasePrice": 10000000000000,"Telescope":11,"Resources": {"Rhodium": 100},                         "Distance": 81,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        37: {"Name": "Utrits",       "BasePrice": 25000000000000,"Telescope":11,"Resources": {"Rhodium": 130, "Inerton": 10},          "Distance": 82,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        38: {"Name": "Doosie",       "BasePrice": 62000000000000,"Telescope":12,"Resources": {"Inerton": 50, "Osmium": 50},            "Distance": 84,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        39: {"Name": "Zulu",         "BasePrice": 160000000000000,"Telescope":12,"Resources": {"Inerton": 100},                        "Distance": 84,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        40: {"Name": "Unicae",       "BasePrice": 400000000000000,"Telescope":12,"Resources": {"Inerton": 80, "Quadium": 20},          "Distance": 85,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        41: {"Name": "Dune",         "BasePrice": 1000000000000000,"Telescope":13,"Resources": {"Osmium": 60, "Quadium": 40},          "Distance": 87,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        42: {"Name": "Naraka",       "BasePrice": 2500000000000000,"Telescope":13,"Resources": {"Quadium": 100},                       "Distance": 88,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        43: {"Name": "Daedalus",     "BasePrice": 6200000000000000,"Telescope":13,"Resources": {"Quadium": 60, "Inerton": 25, "Scrith": 15}, "Distance": 89, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        44: {"Name": "Clovis",       "BasePrice": 15000000000000000,"Telescope":14,"Resources": {"Scrith": 50, "Quadium": 50},         "Distance": 90,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        45: {"Name": "Zero",         "BasePrice": 40000000000000000,"Telescope":14,"Resources": {"Scrith": 100},                       "Distance": 91,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        46: {"Name": "Sotomi",       "BasePrice": 100000000000000000,"Telescope":14,"Resources": {"Scrith": 75, "Uru": 25},            "Distance": 92,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        47: {"Name": "Remidian",     "BasePrice": 250000000000000000,"Telescope":15,"Resources": {"Uru": 60, "Quadium": 40},           "Distance": 93,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        48: {"Name": "Muse",         "BasePrice": 600000000000000000,"Telescope":15,"Resources": {"Uru": 100},                         "Distance": 94,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        49: {"Name": "Arabis",       "BasePrice": 1500000000000000000,"Telescope":15,"Resources": {"Uru": 110, "Vibranium": 20},       "Distance": 95,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        50: {"Name": "Vesna",        "BasePrice": 3800000000000000000,"Telescope":16,"Resources": {"Vibranium": 60, "Scrith": 40},     "Distance": 96,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        51: {"Name": "Chandra",      "BasePrice": 10000000000000000000,"Telescope":16,"Resources": {"Vibranium": 100},                 "Distance": 97,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        52: {"Name": "Vega",         "BasePrice": 25000000000000000000,"Telescope":16,"Resources": {"Vibranium": 70, "Aether": 20, "Rhodium": 10}, "Distance": 98, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        53: {"Name": "Crius",        "BasePrice": 60000000000000000000,"Telescope":17,"Resources": {"Aether": 50, "Scrith": 50},       "Distance": 99,  "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        54: {"Name": "Singhana",     "BasePrice": 150000000000000000000,"Telescope":17,"Resources": {"Aether": 100},                   "Distance": 100, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        55: {"Name": "Zumbia",       "BasePrice": 360000000000000000000,"Telescope":17,"Resources": {"Aether": 70, "Vibranium": 20, "Viterium": 10}, "Distance": 101, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        56: {"Name": "Elysium",      "BasePrice": 900000000000000000000,"Telescope":18,"Resources": {"Viterium": 60, "Uru": 40},       "Distance": 102, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        57: {"Name": "Nyota",        "BasePrice": 2800000000000000000000,"Telescope":18,"Resources": {"Viterium": 100},                "Distance": 103, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        58: {"Name": "Doral",        "BasePrice": 7500000000000000000000,"Telescope":18,"Resources": {"Viterium": 100},                "Distance": 104, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        59: {"Name": "Nikara",       "BasePrice": 21000000000000000000000,"Telescope":19,"Resources": {"Xynium": 70, "Vibranium": 30}, "Distance": 105, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        60: {"Name": "Limbo",        "BasePrice": 59000000000000000000000,"Telescope":19,"Resources": {"Xynium": 100},                 "Distance": 106, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        61: {"Name": "Bob",          "BasePrice": 170000000000000000000000,"Telescope":19,"Resources": {"Xynium": 70, "Quolium": 30},  "Distance": 107, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        62: {"Name": "Midas",        "BasePrice": 460000000000000000000000,"Telescope":20,"Resources": {"Quolium": 55, "Aether": 45},  "Distance": 108, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        63: {"Name": "Antigone",     "BasePrice": 1300000000000000000000000,"Telescope":20,"Resources": {"Quolium": 100},              "Distance": 109, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        64: {"Name": "Hecate",       "BasePrice": 3900000000000000000000000,"Telescope":20,"Resources": {"Quolium": 50, "Xynium": 25, "Luterium": 25}, "Distance": 110, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        65: {"Name": "Sterop",       "BasePrice": 11000000000000000000000000,"Telescope":21,"Resources": {"Luterium": 62, "Quolium": 21, "Xynium": 17}, "Distance": 111, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        66: {"Name": "Lavinia",      "BasePrice": 33000000000000000000000000,"Telescope":21,"Resources": {"Luterium": 100},             "Distance": 112, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        67: {"Name": "Ren",          "BasePrice": 95000000000000000000000000,"Telescope":21,"Resources": {"Luterium": 70, "Quolium": 20, "Wraith": 10}, "Distance": 113, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        68: {"Name": "Gorgons",      "BasePrice": 270000000000000000000000000,"Telescope":22,"Resources": {"Wraith": 60, "Xynium": 40}, "Distance": 114, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        69: {"Name": "Pontus",       "BasePrice": 800000000000000000000000000,"Telescope":22,"Resources": {"Wraith": 80, "Luterium": 20}, "Distance": 115, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
-        70: {"Name": "Leto",         "BasePrice": 2400000000000000000000000000,"Telescope":22,"Resources": {"Wraith": 100},             "Distance": 116, "Levels": {"Mining": 0, "Speed": 0, "Cargo": 0}},
+# ── colours (R,G,B,A 0-255) ───────────────────────────────────────────────────
+C_BG     = (30,  30,  46,  255)
+C_PANEL  = (42,  42,  62,  255)
+C_ACCENT = (124, 106, 247, 255)
+C_TEAL   = (86,  207, 178, 255)
+C_TEXT   = (224, 224, 240, 255)
+C_MUTED  = (136, 136, 153, 255)
+C_GOOD   = (86,  207, 178, 255)
+C_BAD    = (224, 92,  106, 255)
+C_WARN   = (240, 192, 64,  255)
+C_ROW_A  = (37,  37,  56,  255)
+C_ROW_B  = (42,  42,  62,  255)
+C_ENTRY  = (51,  51,  74,  255)
+C_BTN    = (74,  63,  191, 255)
+C_SEP    = (55,  55,  80,  255)
+
+# ── number / time formatting ───────────────────────────────────────────────────
+_SFX = [(1e33,"D"),(1e30,"N"),(1e27,"O"),(1e24,"Sp"),(1e21,"Sx"),
+        (1e18,"Qi"),(1e15,"Q"),(1e12,"T"),(1e9,"B"),(1e6,"M"),(1e3,"K")]
+
+def fmt(n: float) -> str:
+    if n == 0: return "$0"
+    neg = n < 0; n = abs(n)
+    for thr, sfx in _SFX:
+        if n >= thr: return f"{'−' if neg else ''}${n/thr:.1f}{sfx}"
+    return f"{'−' if neg else ''}${n:.2f}"
+
+def fmt_time(s: float) -> str:
+    if s <= 0: return "—"
+    s = int(s)
+    if s < 60:   return f"{s}s"
+    m, s = divmod(s, 60)
+    if m < 60:   return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    if h < 24:   return f"{h}h{m:02d}m"
+    d, h = divmod(h, 24)
+    return f"{d}d{h:02d}h"
+
+def fmt_stars(n: int) -> str:
+    return f"★{n}" if n > 0 else ""
+
+# ── base data ──────────────────────────────────────────────────────────────────
+def load_base() -> dict:
+    with open(BASE_FILE) as f:
+        return json.load(f)
+
+# ── state ──────────────────────────────────────────────────────────────────────
+def default_state(base: dict) -> dict:
+    planets = {}
+    for pid, p in base["planets"].items():
+        owned = (p["telescope"] == 0)
+        lvl   = 1 if owned else 0
+        planets[pid] = {
+            "owned":  owned,
+            "levels": {"mining": lvl, "speed": lvl, "cargo": lvl},
+            "probes": [1.0, 1.0, 1.0],
+            "colony": [1.0, 1.0, 1.0],
+        }
+    return {
+        "ores":     {k: {"stars": 0, "market": 0}                     for k in base["ores"]},
+        "alloys":   {k: {"unlocked": False, "stars": 0, "market": 0}  for k in base["alloys"]},
+        "items":    {k: {"unlocked": False, "stars": 0, "market": 0}  for k in base["items"]},
+        "projects": {k: {"researched": False}                         for k in base["projects"]},
+        "planets":  planets,
+        "globals":  {"mining":1.0,"speed":1.0,"cargo":1.0,
+                     "smelt_speed":1.0,"craft_speed":1.0},
+        "smelters": 1,
+        "crafters": 1,
     }
-}
-BASE_MINING_RATE = 0.25
-# ── persistence helpers ───────────────────────────────────────────────────────
 
-def load_data() -> dict:
-    if os.path.exists(DATA_FILE):
+def _deep_merge(fresh: dict, saved: dict):
+    for k, v in fresh.items():
+        if k not in saved:
+            saved[k] = copy.deepcopy(v)
+        elif isinstance(v, dict) and isinstance(saved.get(k), dict):
+            _deep_merge(v, saved[k])
+
+def load_state(base: dict) -> dict:
+    if os.path.exists(STATE_FILE):
         try:
-            with open(DATA_FILE, "r") as f:
-                tempData = json.load(f)
+            with open(STATE_FILE) as f:
+                saved = json.load(f)
+            _deep_merge(default_state(base), saved)
+            return saved
         except Exception:
             pass
-    else:
-        tempData = json.loads(json.dumps(DEFAULT_DATA))   # deep copy
-    
-    # Ensure flags are present
-    for category in ["ores", "alloys", "items"]:
-        for i in tempData[category]:
-            item = tempData[category][i]
-            if "unlocked" not in item.keys():
-                item["unlocked"] = False
-            if "stars" not in item.keys():
-                item["stars"] = 0
-            if "market" not in item.keys():
-                item["market"] = 0
-            if "realPrice" not in item.keys():
-                item["realPrice"] = item["base_price"]
-    for p in tempData["projects"]:
-        project = tempData["projects"][p]
-        if "unlocked" not in project.keys():
-            project["unlocked"] = False
-        if "Researched" not in project.keys():
-            project["Researched"] = False
-    # JSON turns int keys to strings – re-index as ints
-    raw_planets = tempData.get("planets", {})
-    fixed = {}
-    for k, v in raw_planets.items():
-        try:
-            ik = int(k)
-        except (ValueError, TypeError):
-            ik = k
-        # ensure bonus lists
-        if "colony" not in v:
-            v["colony"] = [1, 1, 1]
-        if "probes" not in v:
-            v["probes"] = [1, 1, 1]
-        if "unlocked" not in v:
-            v["unlocked"] = (v.get("Telescope", 99) == 0)
-        fixed[ik] = v
-    tempData["planets"] = fixed
-    # Ensure global bonus dict exists
-    g = tempData.setdefault("globals", {})
-    g.setdefault("mining",      1.0)
-    g.setdefault("speed",       1.0)
-    g.setdefault("cargo",       1.0)
-    g.setdefault("smelt_speed", 1.0)
-    g.setdefault("craft_speed", 1.0)
-    return tempData
+    return default_state(base)
 
+def save_state(state: dict):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
 
-def save_data(data: dict) -> None:
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-# ── preferences helpers ──────────────────────────────────────────────────────────
-
-DEFAULT_PREFS = {
-    "sort": {
-        "dashboard_filter": "All",
-        "dashboard_sort":   "vps_profit_ore",
-        "projects_sort":    "time",
-    },
-    "col_widths": {
-        "dashboard": {},
-        "projects":  {},
-        "planets":   {},
-    },
-}
+# ── prefs ──────────────────────────────────────────────────────────────────────
+_DEF_PREFS = {"dashboard_filter":"All","dashboard_sort":"vps_profit_ore",
+              "projects_sort":"time"}
 
 def load_prefs() -> dict:
-    prefs = {}
     if os.path.exists(PREFS_FILE):
         try:
-            with open(PREFS_FILE, "r") as f:
-                prefs = json.load(f)
+            with open(PREFS_FILE) as f:
+                p = json.load(f)
+            for k, v in _DEF_PREFS.items():
+                p.setdefault(k, v)
+            return p
         except Exception:
-            prefs = {}
-    def _merge(base, override):
-        for k, v in base.items():
-            if k not in override:
-                override[k] = json.loads(json.dumps(v))
-            elif isinstance(v, dict) and isinstance(override[k], dict):
-                _merge(v, override[k])
-        return override
-    return _merge(DEFAULT_PREFS, prefs)
+            pass
+    return dict(_DEF_PREFS)
 
-def save_prefs(prefs: dict) -> None:
+def save_prefs(prefs: dict):
     with open(PREFS_FILE, "w") as f:
         json.dump(prefs, f, indent=2)
 
-
-# ── calculation helpers ───────────────────────────────────────────────────────
-
-def effective_price(name: str, data: dict) -> float:
-    """Return realPrice (stars+market adjusted) for any resource."""
-    for cat in ("ores", "alloys", "items"):
-        if name in data[cat]:
-            e = data[cat][name]
-            return float(e.get("realPrice", e["base_price"]))
+# ── price (always computed, never cached) ─────────────────────────────────────
+def effective_price(name: str, base: dict, state: dict) -> float:
+    for cat in ("ores","alloys","items"):
+        if name in base[cat]:
+            bp  = base[cat][name]["base_price"]
+            st  = state[cat][name]
+            mv  = [0.33,0.5,1,2,3,4,5][st.get("market",0)+2]
+            sv  = 1.0 + 0.2 * st.get("stars",0)
+            return bp * mv * sv
     return 0.0
 
-def getRealPrice(basePrice: float, stars: int, market: int, category: str = "") -> float:
-    """Sell price adjusted for stars and market level (-2..4).
-    category is preserved for future per-category bonus multipliers.
-    """
-    marketVar = [0.33, 0.5, 1, 2, 3, 4, 5][market + 2]
-    starVar   = 1.0 + 0.2 * stars
-    # TODO: apply category-specific bonuses here
-    return basePrice * marketVar * starVar
+def ore_unlocked(ore: str, base: dict, state: dict) -> bool:
+    return any(ps["owned"] and ore in base["planets"][pid]["resources"]
+               for pid, ps in state["planets"].items())
 
-
-def market_chevrons(market: int) -> str:
-    """▲▲▲ green for positive, ▼▼ red for negative, — for zero."""
-    if market > 0:  return "▲" * market
-    if market < 0:  return "▼" * abs(market)
-    return "—"
-
-def effective_time(name: str, data: dict) -> float:
-    """Return the current effective sell price for any resource."""
-    if name in data["alloys"]:
-        return data["alloys"][name]["smelt_time"]
-    elif name in data["items"]:
-        return data["items"][name]["craft_time"]
-    return 0.0
-
-def total_smelt_time_of_recipe(name: str, category: str, data: dict) -> float:
-    """Recursive sum of all alloy smelt_times, divided by global smelt speed."""
-    entry = data[category][name]
-    own   = (entry["smelt_time"] if category == "alloys" else 0.0)
-    total = own / max(0.001, global_smelt_speed(data))
-    for ingredient, qty in entry.get("recipe", {}).items():
-        if ingredient in data["alloys"]:
-            total += total_smelt_time_of_recipe(ingredient, "alloys", data) * qty
-        elif ingredient in data["items"]:
-            total += total_smelt_time_of_recipe(ingredient, "items", data) * qty
-    return total
-
-
-def total_craft_time_of_recipe(name: str, category: str, data: dict) -> float:
-    """Recursive sum of all item craft_times, divided by global craft speed."""
-    entry = data[category][name]
-    own   = (entry["craft_time"] if category == "items" else 0.0)
-    total = own / max(0.001, global_craft_speed(data))
-    for ingredient, qty in entry.get("recipe", {}).items():
-        if ingredient in data["alloys"]:
-            total += total_craft_time_of_recipe(ingredient, "alloys", data) * qty
-        elif ingredient in data["items"]:
-            total += total_craft_time_of_recipe(ingredient, "items", data) * qty
-    return total
-
-
-def total_wall_time(smelt_raw: float, craft_raw: float,
-                    smelters: int, crafters: int) -> float:
-    """Wall-clock time: smelting and crafting run in parallel.
-    Each pool is divided by the number of machines.
-    Returns max of the two lanes (bottleneck), minimum 1 to avoid /0.
-    """
-    smelt_wall = smelt_raw / max(1, smelters)
-    craft_wall = craft_raw / max(1, crafters)
-    return max(smelt_wall, craft_wall, 1.0)
-	
-def ore_cost_of_recipe(recipe: dict, data: dict) -> float:
-    """Recursively expand a recipe all the way down to raw ore value."""
+def ore_mining_rate(ore: str, base: dict, state: dict) -> float:
     total = 0.0
-    for ingredient, qty in recipe.items():
-        # Is it an ore?
-        if ingredient in data["ores"]:
-            total += effective_price(ingredient, data) * qty
-        # Is it an alloy?
-        elif ingredient in data["alloys"]:
-            sub = data["alloys"][ingredient]
-            sub_ore = ore_cost_of_recipe(sub["recipe"], data)
-            total += sub_ore * qty
-        # Is it an item?
-        elif ingredient in data["items"]:
-            sub = data["items"][ingredient]
-            sub_ore = ore_cost_of_recipe(sub["recipe"], data)
-            total += sub_ore * qty
-        else:
-            # unknown – treat as zero
-            pass
+    gm    = global_mining_bonus(state)
+    for pid, ps in state["planets"].items():
+        if not ps["owned"]: continue
+        pct = base["planets"][pid]["resources"].get(ore, 0)
+        if pct == 0: continue
+        lvl   = ps["levels"]["mining"]
+        bonus = ps["probes"][0] * ps["colony"][0] * gm
+        total += _mining_rate(lvl, bonus) * (pct / 100.0)
     return total
 
+def _mining_rate(lv: int, bonus: float=1.0) -> float:
+    if lv == 0: return 0.0
+    l = lv - 1
+    return bonus * (0.25 + 0.1*l + 0.017*l*l)
 
-def direct_input_cost(recipe: dict, data: dict) -> float:
-    """Value of immediate inputs at their current sell prices."""
+def _ship_speed(lv: int, bonus: float=1.0) -> float:
+    if lv == 0: return 0.0
+    l = lv - 1
+    return bonus * (1.0 + 0.2*l + l*l/75.0)
+
+def _ship_cargo(lv: int, bonus: float=1.0) -> int:
+    if lv == 0: return 0
+    l = lv - 1
+    return round(bonus * (5.0 + 2.0*l + l*l))
+
+# ── global bonuses ─────────────────────────────────────────────────────────────
+def _proj(state, name): return state["projects"].get(name,{}).get("researched",False)
+
+def global_mining_bonus(state):
+    v = float(state.get("globals",{}).get("mining",1))
+    if _proj(state,"Advanced Mining"):  v *= 1.25
+    if _proj(state,"Superior Mining"):  v *= 1.25
+    return v
+
+def global_speed_bonus(state):
+    v = float(state.get("globals",{}).get("speed",1))
+    if _proj(state,"Advanced Thrusters"): v *= 1.25
+    if _proj(state,"Superior Thrusters"): v *= 1.25
+    return v
+
+def global_cargo_bonus(state):
+    v = float(state.get("globals",{}).get("cargo",1))
+    if _proj(state,"Advanced Cargo Handling"): v *= 1.25
+    if _proj(state,"Superior Cargo Handling"): v *= 1.25
+    return v
+
+def global_smelt_speed(state): return float(state.get("globals",{}).get("smelt_speed",1))
+def global_craft_speed(state): return float(state.get("globals",{}).get("craft_speed",1))
+
+# ── time helpers ───────────────────────────────────────────────────────────────
+def total_smelt_time(name, cat, base, state):
+    e   = base[cat][name]
+    own = e["smelt_time"] if cat=="alloys" else 0.0
+    t   = own / max(0.001, global_smelt_speed(state))
+    for ing, qty in e.get("recipe",{}).items():
+        c2 = "alloys" if ing in base["alloys"] else ("items" if ing in base["items"] else None)
+        if c2: t += total_smelt_time(ing, c2, base, state) * qty
+    return t
+
+def total_craft_time(name, cat, base, state):
+    e   = base[cat][name]
+    own = e["craft_time"] if cat=="items" else 0.0
+    t   = own / max(0.001, global_craft_speed(state))
+    for ing, qty in e.get("recipe",{}).items():
+        c2 = "alloys" if ing in base["alloys"] else ("items" if ing in base["items"] else None)
+        if c2: t += total_craft_time(ing, c2, base, state) * qty
+    return t
+
+def wall_time(smelt, craft, smelters, crafters):
+    return max(smelt/max(1,smelters), craft/max(1,crafters), 1.0)
+
+def ore_cost_rec(recipe, base, state):
     total = 0.0
-    for ingredient, qty in recipe.items():
-        total += effective_price(ingredient, data) * qty
+    for ing, qty in recipe.items():
+        if   ing in base["ores"]:   total += effective_price(ing, base, state) * qty
+        elif ing in base["alloys"]: total += ore_cost_rec(base["alloys"][ing]["recipe"], base, state) * qty
+        elif ing in base["items"]:  total += ore_cost_rec(base["items"][ing]["recipe"],  base, state) * qty
     return total
 
-
-def project_cost(recipe: dict, data: dict) -> float:
-    """Value of project ingredients using sell prices (ore > alloy > item lookup)."""
-    total = 0.0
-    for ingredient, qty in recipe.items():
-        total += effective_price(ingredient, data) * qty
-    return total
-
-
-def project_time(recipe: dict, data: dict,
-                 smelters: int = 1, crafters: int = 1) -> float:
-    """Total wall-clock time to produce all ingredients of a project recipe."""
-    smelt_total = 0.0
-    craft_total = 0.0
-    for ingredient, qty in recipe.items():
-        if ingredient in data["alloys"]:
-            smelt_total += total_smelt_time_of_recipe(ingredient, "alloys", data) * qty
-            craft_total += total_craft_time_of_recipe(ingredient, "alloys", data) * qty
-        elif ingredient in data["items"]:
-            smelt_total += total_smelt_time_of_recipe(ingredient, "items", data) * qty
-            craft_total += total_craft_time_of_recipe(ingredient, "items", data) * qty
-        # ores: no production time
-    return total_wall_time(smelt_total, craft_total, smelters, crafters)
-
-
-def project_prereq_met(prereqs, data: dict) -> bool:
-    """
-    prereqs can be:
-      ""        -> always available
-      "A"       -> project A must be Researched
-      ["A","B"] -> project A OR project B must be Researched (either satisfies)
-    """
-    if not prereqs:
-        return True
-    projects = data.get("projects", {})
-    if isinstance(prereqs, list):
-        return any(projects.get(p, {}).get("Researched", False) for p in prereqs)
-    return projects.get(prereqs, {}).get("Researched", False)
-
-
-def analyze_recipe(name: str, category: str, data: dict,
-                   smelters: int = 1, crafters: int = 1) -> dict:
-    """Return a dict of metrics for one recipe."""
-    entry    = data[category][name]
-    recipe   = entry["recipe"]
-    out_val  = effective_price(name, data)
-    time_key = "smelt_time" if category == "alloys" else "craft_time"
-    t        = entry.get(time_key, 1)
-
-    smelt_raw  = total_smelt_time_of_recipe(name, category, data)
-    craft_raw  = total_craft_time_of_recipe(name, category, data)
-    wall_time  = total_wall_time(smelt_raw, craft_raw, smelters, crafters)
-
-    direct_cost = direct_input_cost(recipe, data)
-    ore_cost    = ore_cost_of_recipe(recipe, data)
-
-    profit_vs_direct = out_val - direct_cost
-    profit_vs_ore    = out_val - ore_cost
-
-    vps_out       = out_val          / t
-    vps_vs_direct = profit_vs_direct / t
-    vps_vs_ore    = profit_vs_ore    / wall_time
-
-    unlocked = bool(entry["unlocked"])
-
-    return {
-        "unlocked":         unlocked,
-        "name":             name,
-        "category":         category,
-        "output_value":     out_val,
-        "direct_cost":      direct_cost,
-        "ore_cost":         ore_cost,
-        "profit_direct":    profit_vs_direct,
-        "profit_ore":       profit_vs_ore,
-        "craft_time":       t,
-        "smelt_raw":        smelt_raw,
-        "craft_raw":        craft_raw,
-        "total_time":       wall_time,
-        "vps_output":       vps_out,
-        "vps_profit_direct":vps_vs_direct,
-        "vps_profit_ore":   vps_vs_ore,
-    }
-
-
-def analyze_all(data: dict, smelters: int = 1, crafters: int = 1) -> list:
-    results = []
-    for name in data["alloys"]:
-        results.append(analyze_recipe(name, "alloys", data, smelters, crafters))
-    for name in data["items"]:
-        results.append(analyze_recipe(name, "items", data, smelters, crafters))
-    return results
-    
-def ore_unlocked_from_planets(ore: str, data: dict) -> bool:
-    """An ore is unlocked if any owned planet produces it."""
-    for planet in data.get("planets", {}).values():
-        if planet.get("unlocked", False) and ore in planet["Resources"]:
-            return True
-    return False
-
-
-def ore_mining_rate(ore: str, data: dict) -> float:
-    """Sum of (mining_rate * ore_pct/100) across all unlocked planets.
-    Returns ore units per second contributed by all active planets.
-    """
-    total = 0.0
-    for planet in data.get("planets", {}).values():
-        if not planet.get("unlocked", False):
-            continue
-        pct = planet["Resources"].get(ore, 0)
-        if pct == 0:
-            continue
-        lvl     = planet["Levels"]["Mining"]
-        # combined bonus = probe[0] * colony[0] * global
-        bonus   = (planet.get("probes", [1,1,1])[0]
-                   * planet.get("colony", [1,1,1])[0]
-                   * global_mining_bonus(data))
-        rate    = mining_rate(lvl, bonus)
-        total  += rate * (pct / 100.0)
-    return total
-
-
-def mining_rate(level: int, bonus: float = 1) -> float:
-    if level == 0:
-        return 0
-    l = level - 1
-    mining = bonus * (BASE_MINING_RATE + (0.1 * l) + (0.017 * (l ** 2)))
-    return mining
-    
-def ship_speed(level: int, bonus: float = 1) -> float:
-    if level == 0:
-        return 0
-    l = level - 1
-    speed = bonus * (1 + (0.2 * l) + ((l ** 2) / 75))
-    return speed
-    
-def ship_cargo(level: int, bonus: float = 1) -> int:
-    if level == 0:
-        return 0
-    l = level - 1
-    cargo = round(bonus * (5 + (2 * l) + (l ** 2)))
-    return cargo
-    
-
-# ── global bonus helpers ─────────────────────────────────────────────────────
-# These functions centralise bonus lookup so future bonus sources
-# (projects, colonies, etc.) can be added in one place.
-
-def global_mining_bonus(data: dict) -> float:
-    """Combined global mining rate multiplier."""
-    g = data.get("globals", {})
-    # TODO: add project / colony bonuses here
-    gmb = float(g.get("mining", 1.0))
-    if data["projects"]["Advanced Mining"]["Researched"]:
-        gmb = gmb * 1.25
-    if data["projects"]["Superior Mining"]["Researched"]:
-        gmb = gmb * 1.25
-    return gmb
-
-def global_speed_bonus(data: dict) -> float:
-    """Combined global ship speed multiplier."""
-    g = data.get("globals", {})
-    gsb = float(g.get("speed", 1.0))
-    if data["projects"]["Advanced Thrusters"]["Researched"]:
-        gsb = gsb * 1.25
-    if data["projects"]["Superior Thrusters"]["Researched"]:
-        gsb = gsb * 1.25
-    
-    return gsb
-
-def global_cargo_bonus(data: dict) -> float:
-    """Combined global ship cargo multiplier."""
-    g = data.get("globals", {})
-    gcb = float(g.get("cargo", 1.0))
-    if data["projects"]["Advanced Cargo Handling"]["Researched"]:
-        gcb = gcb * 1.25
-    if data["projects"]["Superior Cargo Handling"]["Researched"]:
-        gcb = gcb * 1.25
-    return gcb
-
-def global_smelt_speed(data: dict) -> float:
-    """Combined global smelt speed multiplier (higher = faster)."""
-    g = data.get("globals", {})
-    return float(g.get("smelt_speed", 1.0))
-
-def global_craft_speed(data: dict) -> float:
-    """Combined global craft speed multiplier (higher = faster)."""
-    g = data.get("globals", {})
-    return float(g.get("craft_speed", 1.0))
-
-
-# ── number formatting ─────────────────────────────────────────────────────────
-SUFFIXES = [
-    (1e33, "D"),  (1e30, "N"),  (1e27, "O"),  (1e24, "Sp"),
-    (1e21, "Sx"), (1e18, "Qi"), (1e15, "Q"),  (1e12, "T"),
-    (1e9,  "B"),  (1e6,  "M"),  (1e3,  "K"),
-]
-
-def fmt(n: float, dp: int = 2) -> str:
-    if n == 0:
-        return "$0"
-    neg = n < 0
-    n = abs(n)
-    for threshold, suffix in SUFFIXES:
-        if n >= threshold:
-            val = round(n / threshold, dp)
-            return f"{'−' if neg else ''}${val:.1f}{suffix}"
-    return f"{'−' if neg else ''}${round(n, dp):.2f}"
-    
-def format_time(s: float) -> str:
-    d = 0
-    h = 0
-    m = 0
-    timeStr = ""
-    if s >= 60:
-        m, s = list(map(int,divmod(s, 60)))
-        if m >= 60:
-            h, m = list(map(int,divmod(m, 60)))
-            if h >= 24:
-                d, h = list(map(int,divmod(h, 24)))
-                timeStr = f"{d}d{h:0>2d}h"
-            else:
-                timeStr = f"{h}h{m:0>2d}m"
-        else:
-            timeStr = f"{m}m{s:0>2d}s"
-    else:
-        timeStr = f"{s:.1f}s"
-    return timeStr
-    
-
-def get_price(inStr:str) -> float:
-    if inStr == '':
-        return 0
-    n = float(re.search(r'[\d\.]+',inStr)[0])
-    if inStr[-1] == 'k' or inStr[-1] == 'K':
-        n = n * 1e3
-    elif inStr[-1] == 'm' or inStr[-1] == 'M':
-        n = n * 1e6
-    elif inStr[-1] == 'b' or inStr[-1] == 'B':
-        n = n * 1e9
-    elif inStr[-1] == 't' or inStr[-1] == 'T':
-        n = n * 1e12
-    return n
-       
-
-# ── colours (must be defined before SpreadsheetGrid uses them as defaults) ────
-DARK_BG     = "#1e1e2e"
-PANEL_BG    = "#2a2a3e"
-ACCENT      = "#7c6af7"
-ACCENT2     = "#56cfb2"
-TEXT        = "#e0e0f0"
-MUTED       = "#888899"
-GOOD        = "#56cfb2"
-BAD         = "#e05c6a"
-WARNING     = "#f0c040"
-ROW_A       = "#252538"
-ROW_B       = "#2a2a3e"
-ENTRY_BG    = "#33334a"
-BTN_BG      = "#4a3fbf"
-BTN_HOVER   = "#5a4fcf"
-
-REG_FONT = ("Segoe UI", 14)
-BOLD_FONT = ("Segoe UI", 14, "bold")
-FOOTER_FONT = ("Segoe UI", 9)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Spreadsheet grid widget
-# ─────────────────────────────────────────────────────────────────────────────
-
-class SpreadsheetGrid(ttk.Frame):
-    """
-    A lightweight inline-editable spreadsheet built from a Canvas + Entry overlay.
-    Clicking a cell opens an Entry widget directly on top of it.
-    Tab / Enter / arrow keys navigate between cells.
-    Changes are committed on focus-out and propagated via on_change().
-    """
-
-    ROW_H   = 24
-    HDR_H   = 26
-    PAD_X   = 6
-
-    def __init__(self, master, columns, accent=ACCENT, on_change=None,
-                 dropdown_cols=None, checkbox_cols=None,
-                 slider_cols=None, readonly_cols=None,
-                 star_cols=None, extra_widgets=None, **kw):
-        """
-        columns       : list of (header_label, width_px, anchor)
-        on_change     : callable fired after any cell edit
-        dropdown_cols : dict of {col_index: callable_returning_list}
-        checkbox_cols : set of col_index values rendered as ☑/☐ toggles
-        slider_cols   : dict of {col_index: (min_val, max_val)} integer sliders
-        readonly_cols : set of col_index values that cannot be edited
-        """
-        super().__init__(master, style="Dark.TFrame", **kw)
-        self._cols          = columns
-        self._accent        = accent
-        self._on_change     = on_change or (lambda: None)
-        self._dropdown_cols = dropdown_cols or {}
-        self._checkbox_cols = set(checkbox_cols or [])
-        self._slider_cols   = slider_cols   or {}
-        self._readonly_cols = set(readonly_cols or [])
-        self._star_cols     = set(star_cols or [])
-        self._extra_widgets = extra_widgets or []
-        self._data          = []
-        self._sel           = None
-        self._entry         = None
-        self._entry_var     = tk.StringVar()
-
-        self._build()
-
-    # ── build ─────────────────────────────────────────────────────────────────
-    def _build(self):
-        # toolbar (extra_widgets injected by caller sit here)
-        tb = ttk.Frame(self, style="Dark.TFrame")
-        tb.pack(fill="x", pady=(0, 4))
-        for w in (self._extra_widgets or []):
-            w(tb)   # callable receives the toolbar frame
-        self._status = ttk.Label(tb, text="Click a cell to edit", style="Muted.TLabel")
-        self._status.pack(side="right", padx=8)
-
-        # canvas + scrollbars
-        cf = ttk.Frame(self, style="Dark.TFrame")
-        cf.pack(fill="both", expand=True)
-
-        self._canvas = tk.Canvas(cf, bg=DARK_BG, highlightthickness=0)
-        vsb = ttk.Scrollbar(cf, orient="vertical",   command=self._canvas.yview)
-        hsb = ttk.Scrollbar(cf, orient="horizontal",  command=self._canvas.xview)
-        self._canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        self._canvas.grid(row=0, column=0, sticky="nsew")
-        cf.rowconfigure(0, weight=1)
-        cf.columnconfigure(0, weight=1)
-
-        self._canvas.bind("<Button-1>",     self._on_click)
-        self._canvas.bind("<Configure>",    lambda e: self._redraw())
-        self._canvas.bind("<MouseWheel>",   lambda e: self._canvas.yview_scroll(-1*(e.delta//120), "units"))
-        self._canvas.bind("<Button-4>",     lambda e: self._canvas.yview_scroll(-1, "units"))
-        self._canvas.bind("<Button-5>",     lambda e: self._canvas.yview_scroll(1, "units"))
-
-    # ── total grid dimensions ─────────────────────────────────────────────────
-    def _total_width(self):
-        return sum(w for _, w, _ in self._cols) + 2
-
-    def _col_x(self, col):
-        return sum(self._cols[i][1] for i in range(col))
-
-    # ── drawing ───────────────────────────────────────────────────────────────
-    def _redraw(self):
-        c = self._canvas
-        c.delete("all")
-        nrows = len(self._data)
-        ncols = len(self._cols)
-        H     = self.ROW_H
-        HDR   = self.HDR_H
-
-        total_h = HDR + nrows * H + 2
-        total_w = self._total_width()
-        c.configure(scrollregion=(0, 0, total_w, total_h))
-
-        # header background
-        c.create_rectangle(0, 0, total_w, HDR, fill=PANEL_BG, outline="")
-
-        x = 0
-        for ci, (label, w, anchor) in enumerate(self._cols):
-            # header cell
-            c.create_rectangle(x, 0, x+w, HDR, fill=PANEL_BG, outline=DARK_BG, width=1)
-            c.create_text(x + self.PAD_X, HDR//2, text=label,
-                          anchor="w", fill=self._accent,
-                          font=("Segoe UI", 11, "bold"))
-            #c.create_text(x + self.PAD_X, HDR//2, text=label,
-            #              anchor=anchor, fill=self._accent,
-            #              font=("Segoe UI", 11, "bold"))
-            x += w
-
-        # data rows
-        for ri, row in enumerate(self._data):
-            y = HDR + ri * H
-            bg = ROW_A if ri % 2 == 0 else ROW_B
-            # highlight selected row
-            if self._sel and self._sel[0] == ri:
-                bg = "#3a3a5a"
-
-            x = 0
-            for ci, (_, w, a) in enumerate(self._cols):
-                cell_bg = bg
-                if self._sel == (ri, ci):
-                    cell_bg = "#4a3f7f"
-                c.create_rectangle(x, y, x+w, y+H, fill=cell_bg, outline="#333348", width=1)
-                val = row[ci] if ci < len(row) else ""
-                if ci in self._checkbox_cols:
-                    # Draw a checkbox glyph centred in the cell
-                    # (works whether or not the col is also readonly)
-                    checked = str(val).lower() in ("true", "1", "yes")
-                    glyph = "☑" if checked else "☐"
-                    if ci in self._readonly_cols:
-                        glyph_color = ACCENT2 if checked else "#444460"
-                    else:
-                        glyph_color = self._accent if checked else MUTED
-                    c.create_text(x + w//2, y + H//2, text=glyph,
-                                  anchor="center", fill=glyph_color,
-                                  font=("Segoe UI", 13))
-                elif ci in self._star_cols:
-                    try:
-                        sv = int(float(str(val)))
-                    except (ValueError, TypeError):
-                        sv = 0
-                    # Draw + button on right
-                    btn_w = 15
-                    c.create_rectangle(x + w - btn_w, y + 5, x + w - 1, y + H - 5,
-                                       fill="#3a3a5a", outline="#555570")
-                    c.create_text(x + w - btn_w // 2, y + H // 2,
-                                  text="+", anchor="center",
-                                  fill=ACCENT2, font=("Segoe UI", 11, "bold"))
-                    # Draw ★N on left (blank if 0)
-                    if sv > 0:
-                        c.create_text(x + self.PAD_X, y + H // 2,
-                                      text=f"★{sv}", anchor="w",
-                                      fill=WARNING, font=REG_FONT)
-                elif ci in self._slider_cols:
-                    # Draw chevron indicator for market slider
-                    try:
-                        mv = int(float(str(val)))
-                    except (ValueError, TypeError):
-                        mv = 0
-                    if mv > 0:
-                        glyph, color = "▲" * mv, GOOD
-                    elif mv < 0:
-                        glyph, color = "▼" * abs(mv), BAD
-                    else:
-                        glyph, color = "—", MUTED
-                    c.create_text(x + self.PAD_X, y + H//2,
-                                  text=glyph, anchor="w",
-                                  fill=color, font=("Segoe UI", 11))
-                elif ci in self._readonly_cols:
-                    # Read-only: draw with muted colour
-                    tx = (x + w - self.PAD_X) if a != "w" else (x + self.PAD_X)
-                    c.create_text(tx, y + H//2, text=str(val),
-                                  anchor=a, fill=MUTED, font=REG_FONT)
-                elif val != "" or self._sel != (ri, ci):
-                    if a == "w":
-                        c.create_text(x + self.PAD_X, y + H//2, text=str(val),
-                                  anchor=a, fill=TEXT,
-                                  font=REG_FONT)
-                        
-                    else:
-                        c.create_text(x + w - self.PAD_X, y + H//2, text=str(val),
-                                  anchor=a, fill=TEXT,
-                                  font=REG_FONT)
-                x += w
-
-        # reposition active entry if visible
-        if self._entry and self._sel:
-            self._position_entry(*self._sel)
-
-    # ── cell editing ──────────────────────────────────────────────────────────
-    def _on_click(self, event):
-        cx = self._canvas.canvasx(event.x)
-        cy = self._canvas.canvasy(event.y)
-        HDR = self.HDR_H
-        if cy < HDR:
-            return
-        ri = int((cy - HDR) // self.ROW_H)
-        if ri >= len(self._data):
-            return
-        # find column
-        x = 0
-        for ci, (_, w, _) in enumerate(self._cols):
-            if x <= cx < x + w:
-                if ci in self._checkbox_cols:
-                    self._toggle_checkbox(ri, ci)
-                elif ci in self._readonly_cols:
-                    pass  # not editable
-                elif ci in self._star_cols:
-                    # right 20px = + button; rest = open entry for manual edit
-                    col_x_start = sum(self._cols[i][1] for i in range(ci))
-                    col_w = self._cols[ci][1]
-                    if cx >= col_x_start + col_w - 20:
-                        self._increment_star(ri, ci)
-                    else:
-                        self._open_cell(ri, ci)
-                elif ci in self._slider_cols:
-                    self._open_slider(ri, ci)
-                else:
-                    self._open_cell(ri, ci)
-                return
-            x += w
-
-    def _toggle_checkbox(self, ri, ci):
-        """Flip the boolean value in a checkbox cell immediately."""
-        self._commit_entry()
-        while len(self._data[ri]) <= ci:
-            self._data[ri].append("")
-        cur = str(self._data[ri][ci]).lower() in ("true", "1", "yes")
-        self._data[ri][ci] = "True" if not cur else "False"
-        self._sel = (ri, ci)
-        self._redraw()
-        self._on_change()
-
-    def _increment_star(self, ri, ci):
-        """Increment a star-count cell by 1 on click (no minimum limit displayed)."""
-        self._commit_entry()
-        while len(self._data[ri]) <= ci:
-            self._data[ri].append("")
-        try:
-            cur = int(float(str(self._data[ri][ci])))
-        except (ValueError, TypeError):
-            cur = 0
-        self._data[ri][ci] = str(cur + 1)
-        self._sel = (ri, ci)
-        self._redraw()
-        self._on_change()
-
-    def _open_slider(self, ri, ci):
-        """Overlay a horizontal Scale widget on a slider cell."""
-        self._commit_entry()
-        self._sel = (ri, ci)
-        self._redraw()
-        lo, hi = self._slider_cols[ci]
-        raw = self._data[ri][ci] if ci < len(self._data[ri]) else 0
-        try:
-            ival = int(float(str(raw)))
-        except (ValueError, TypeError):
-            ival = 0
-        sv = tk.IntVar(value=ival)
-
-        def _slide(*_):
-            while len(self._data[ri]) <= ci:
-                self._data[ri].append("")
-            self._data[ri][ci] = str(sv.get())
-            self._redraw()
-            self._on_change()
-
-        scale = tk.Scale(self._canvas, from_=lo, to=hi,
-                         orient="horizontal", variable=sv, command=_slide,
-                         bg=ENTRY_BG, fg=TEXT, troughcolor=PANEL_BG,
-                         highlightthickness=0, bd=0,
-                         activebackground=self._accent,
-                         sliderrelief="flat", showvalue=True,
-                         font=("Segoe UI", 8))
-        scale.bind("<FocusOut>", lambda e: self._dismiss_slider(scale))
-        scale.bind("<Escape>",   lambda e: self._dismiss_slider(scale))
-        self._entry = scale
-        self._position_entry(ri, ci)
-        scale.focus_set()
-        self._status.configure(text=f"Row {ri+1} — drag or use ← → arrow keys")
-
-    def _dismiss_slider(self, scale):
-        if self._entry is scale:
-            self._entry.destroy()
-            self._entry = None
-        self._sel = None
-        self._redraw()
-
-    def _open_cell(self, ri, ci):
-        self._commit_entry()
-        self._sel = (ri, ci)
-        self._redraw()
-
-        val = self._data[ri][ci] if ci < len(self._data[ri]) else ""
-        self._entry_var.set(str(val))
-
-        if ci in self._dropdown_cols:
-            # Combobox (dropdown) cell
-            choices = [""] + list(self._dropdown_cols[ci]())
-            ent = ttk.Combobox(self._canvas, textvariable=self._entry_var,
-                               values=choices, state="readonly",
-                               font=REG_FONT)
-            ent.option_add("*TCombobox*Listbox.background",      PANEL_BG)
-            ent.option_add("*TCombobox*Listbox.foreground",      TEXT)
-            ent.option_add("*TCombobox*Listbox.selectBackground", self._accent)
-            ent.bind("<<ComboboxSelected>>", lambda e: self._nav(ri, ci, 0, 1))
-            ent.bind("<Return>",    lambda e: self._nav(ri, ci, 0, 1))
-            ent.bind("<Tab>",       lambda e: (self._nav(ri, ci, 0, 1), "break")[1])
-            ent.bind("<Shift-Tab>", lambda e: (self._nav(ri, ci, 0, -1), "break")[1])
-            ent.bind("<Escape>",    lambda e: self._cancel_entry())
-            ent.bind("<FocusOut>",  lambda e: self._commit_entry())
-            self._entry = ent
-            self._position_entry(ri, ci)
-            ent.focus_set()
-            ent.after(50, ent.event_generate, "<Button-1>")
-        else:
-            # plain Entry cell
-            ent = tk.Entry(self._canvas, textvariable=self._entry_var,
-                           bg=ENTRY_BG, fg=TEXT, insertbackground=TEXT,
-                           relief="flat", font=REG_FONT,
-                           highlightthickness=1, highlightcolor=self._accent,
-                           highlightbackground=self._accent)
-            ent.bind("<Return>",    lambda e: self._nav(ri, ci, 1, 0))
-            ent.bind("<Tab>",       lambda e: (self._nav(ri, ci, 0, 1), "break")[1])
-            ent.bind("<Shift-Tab>", lambda e: (self._nav(ri, ci, 0, -1), "break")[1])
-            ent.bind("<Up>",        lambda e: self._nav(ri, ci, -1, 0))
-            ent.bind("<Down>",      lambda e: self._nav(ri, ci, 1, 0))
-            ent.bind("<Escape>",    lambda e: self._cancel_entry())
-            ent.bind("<FocusOut>",  lambda e: self._commit_entry())
-            self._entry = ent
-            self._position_entry(ri, ci)
-            ent.focus_set()
-            ent.select_range(0, "end")
-
-        self._status.configure(
-            text=f"Row {ri+1}, Col {ci+1} — " +
-                 ("choose from list" if ci in self._dropdown_cols
-                  else "Tab/Enter/arrows to navigate, Esc to cancel"))
-
-    def _position_entry(self, ri, ci):
-        if not self._entry:
-            return
-        HDR = self.HDR_H
-        x0 = self._col_x(ci)
-        y0 = HDR + ri * self.ROW_H
-        w  = self._cols[ci][1]
-        H  = self.ROW_H
-        # offset by canvas scroll
-        ox = self._canvas.canvasx(0)
-        oy = self._canvas.canvasy(0)
-        self._entry.place(x=x0 - ox, y=y0 - oy, width=w, height=H)
-
-    def _commit_entry(self):
-        if self._entry is None or self._sel is None:
-            return
-        # Scale widgets write through on every drag; just destroy
-        if isinstance(self._entry, tk.Scale):
-            self._entry.destroy()
-            self._entry = None
-            self._sel   = None
-            self._redraw()
-            return
-        ri, ci = self._sel
-        val = self._entry_var.get()
-        while len(self._data[ri]) <= ci:
-            self._data[ri].append("")
-        self._data[ri][ci] = val
-        self._entry.destroy()
-        self._entry = None
-        self._redraw()
-        self._on_change()
-
-    def _cancel_entry(self):
-        if self._entry:
-            self._entry.destroy()
-            self._entry = None
-        self._sel = None
-        self._redraw()
-
-    def _nav(self, ri, ci, dr, dc):
-        self._commit_entry()
-        nr = ri + dr
-        nc = ci + dc
-        ncols = len(self._cols)
-        nrows = len(self._data)
-        if nc >= ncols:
-            nc = 0; nr += 1
-        if nc < 0:
-            nc = ncols - 1; nr -= 1
-        nr = max(0, min(nr, nrows - 1))
-        nc = max(0, min(nc, ncols - 1))
-        self._open_cell(nr, nc)
-
-    # ── row operations ────────────────────────────────────────────────────────
-    def _add_row(self):
-        self._commit_entry()
-        self._data.append([""] * len(self._cols))
-        self._sel = (len(self._data) - 1, 0)
-        self._redraw()
-        self._open_cell(len(self._data) - 1, 0)
-        # scroll to bottom
-        self._canvas.yview_moveto(1.0)
-        self._on_change()
-
-    def _del_row(self):
-        self._commit_entry()
-        if not self._data:
-            return
-        if self._sel:
-            ri = self._sel[0]
-        else:
-            ri = len(self._data) - 1
-        if messagebox.askyesno("Delete Row", f"Delete row {ri+1}?"):
-            del self._data[ri]
-            self._sel = None
-            self._redraw()
-            self._on_change()
-
-    def _move_up(self):
-        self._commit_entry()
-        if not self._sel:
-            return
-        ri = self._sel[0]
-        if ri <= 0:
-            return
-        self._data[ri-1], self._data[ri] = self._data[ri], self._data[ri-1]
-        self._sel = (ri-1, self._sel[1])
-        self._redraw()
-        self._on_change()
-
-    def _move_down(self):
-        self._commit_entry()
-        if not self._sel:
-            return
-        ri = self._sel[0]
-        if ri >= len(self._data) - 1:
-            return
-        self._data[ri+1], self._data[ri] = self._data[ri], self._data[ri+1]
-        self._sel = (ri+1, self._sel[1])
-        self._redraw()
-        self._on_change()
-
-    # ── public API ────────────────────────────────────────────────────────────
-    def append_row(self, values):
-        row = [str(v) if v != "" else "" for v in values]
-        # pad/trim to column count
-        ncols = len(self._cols)
-        row = row[:ncols] + [""] * max(0, ncols - len(row))
-        self._data.append(row)
-        self._redraw()
-
-    def get_rows(self):
-        """Return current data as list of lists of strings."""
-        return [list(r) for r in self._data]
-
-    def clear(self):
-        self._data.clear()
-        self._sel  = None
-        self._entry = None
-        self._redraw()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# GUI
-# ─────────────────────────────────────────────────────────────────────────────
-
-COL_DEFS = [
-    ("Name",           "name",              180, "w"),
-    ("Type",           "category",           60, "center"),
-    ("Output $",       "output_value",       120, "e"),
-    ("Input Cost",     "direct_cost",        120, "e"),
-    ("Ore Cost",       "ore_cost",           120, "e"),
-    ("Profit/Input",   "profit_direct",      120, "e"),
-    ("Profit/Ore",     "profit_ore",         120, "e"),
-    ("Time(s)",        "craft_time",          90, "center"),
-    ("Smelt Time",     "smelt_raw",           90, "center"),
-    ("Craft Time",     "craft_raw",           90, "center"),
-    ("Total Time",     "total_time",          90, "center"),
-    ("$/s Output",     "vps_output",         120, "e"),
-    ("$/s vs Input",   "vps_profit_direct",  120, "e"),
-    ("$/s vs Ore",     "vps_profit_ore",     120, "e"),
-]
-
-
-class App(tk.Tk):
+def prereq_met(prereq, state):
+    if not prereq: return True
+    pr = state["projects"]
+    if isinstance(prereq, list): return any(pr.get(p,{}).get("researched") for p in prereq)
+    return pr.get(prereq,{}).get("researched",False)
+
+def analyze(name, cat, base, state):
+    e  = base[cat][name]
+    ov = effective_price(name, base, state)
+    tk = "smelt_time" if cat=="alloys" else "craft_time"
+    t  = e.get(tk,1)
+    adj_t = t / max(0.001, global_smelt_speed(state) if cat=="alloys" else global_craft_speed(state))
+    sm = total_smelt_time(name, cat, base, state)
+    cr = total_craft_time(name, cat, base, state)
+    s  = state.get("smelters",1); c = state.get("crafters",1)
+    wt = wall_time(sm, cr, s, c)
+    dc = sum(effective_price(i,base,state)*q for i,q in e.get("recipe",{}).items())
+    oc = ore_cost_rec(e.get("recipe",{}), base, state)
+    pd = ov - dc; po = ov - oc
+    return {"name":name,"category":cat,
+            "unlocked":state[cat][name].get("unlocked",False),
+            "output_value":ov,"direct_cost":dc,"ore_cost":oc,
+            "profit_direct":pd,"profit_ore":po,
+            "craft_time":adj_t,"smelt_raw":sm,"craft_raw":cr,"total_time":wt,
+            "vps_output":ov/t if t else 0,
+            "vps_profit_direct":pd/t if t else 0,
+            "vps_profit_ore":po/wt if wt else 0}
+
+def analyze_all(base, state):
+    r = []
+    for n in base["alloys"]: r.append(analyze(n,"alloys",base,state))
+    for n in base["items"]:  r.append(analyze(n,"items", base,state))
+    return r
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Application
+# ═════════════════════════════════════════════════════════════════════════════
+class App:
     def __init__(self):
-        super().__init__()
-        self.title("Idle Planet Miner – Recipe Calculator")
-        self.configure(bg=DARK_BG)
-        self.minsize(1200, 700)
-        self.data = load_data()
+        self.base  = load_base()
+        self.state = load_state(self.base)
+        self.prefs = load_prefs()
 
-        self._smelters = tk.IntVar(value=1)
-        self._crafters = tk.IntVar(value=1)
-        self._prefs = load_prefs()
-        self._build_styles()
-        self._build_ui()
-        self._refresh_table()
+        dpg.create_context()
+        self._load_font()
+        self._load_images()
+        self._theme()
 
-    # ── styles ────────────────────────────────────────────────────────────────
-    def _build_styles(self):
-        s = ttk.Style(self)
-        s.theme_use("clam")
+        with dpg.window(tag="main", no_title_bar=True, no_move=True,
+                        no_resize=True, no_scrollbar=True):
+            self._hdr()
+            dpg.add_separator()
+            with dpg.tab_bar():
+                with dpg.tab(label="  Dashboard  "): self._tab_dash()
+                with dpg.tab(label="  Ores       "): self._tab_ores()
+                with dpg.tab(label="  Alloys     "): self._tab_alloys()
+                with dpg.tab(label="  Items      "): self._tab_items()
+                with dpg.tab(label="  Projects   "): self._tab_projects()
+                with dpg.tab(label="  Planets    "): self._tab_planets()
 
-        s.configure("Dark.TFrame",       background=DARK_BG)
-        s.configure("Panel.TFrame",      background=PANEL_BG)
-        s.configure("Dark.TLabel",       background=DARK_BG,   foreground=TEXT)
-        s.configure("Panel.TLabel",      background=PANEL_BG,  foreground=TEXT)
-        s.configure("Muted.TLabel",      background=DARK_BG,   foreground=MUTED, font=REG_FONT)
-        s.configure("Title.TLabel",      background=DARK_BG,   foreground=ACCENT, font=("Segoe UI", 16, "bold"))
-        s.configure("Accent.TLabel",     background=PANEL_BG,  foreground=ACCENT2)
-        s.configure("Dark.TButton",      background=BTN_BG,    foreground=TEXT, font=REG_FONT, borderwidth=0, focusthickness=0)
-        s.map("Dark.TButton",            background=[("active", BTN_HOVER)])
-        s.configure("Dark.TEntry",       fieldbackground=ENTRY_BG, foreground=TEXT, insertcolor=TEXT)
-        s.configure("Dark.TCombobox",    fieldbackground=ENTRY_BG, foreground=TEXT, background=PANEL_BG)
-        s.map("Dark.TCombobox",          fieldbackground=[("readonly", ENTRY_BG)])
-        s.configure("Dark.TNotebook",    background=DARK_BG,  tabmargins=[2, 5, 2, 0])
-        s.configure("Dark.TNotebook.Tab",background=PANEL_BG, foreground=MUTED, padding=[12, 4])
-        s.map("Dark.TNotebook.Tab",      background=[("selected", DARK_BG)],
-                                         foreground=[("selected", ACCENT)])
+        dpg.set_viewport_resize_callback(self._resize)
+        dpg.create_viewport(title="Idle Planet Miner - Calculator",
+                            width=1440, height=860, min_width=900, min_height=600)
+        dpg.setup_dearpygui()
+        dpg.show_viewport()
+        self._resize()
+        self._refresh_all()
+        dpg.start_dearpygui()
+        dpg.destroy_context()
 
-        s.configure("Treeview",
-                     background=ROW_A, fieldbackground=ROW_A,
-                     foreground=TEXT, rowheight=28, font=REG_FONT)
-        s.configure("Treeview.Heading",
-                     background=PANEL_BG, foreground=ACCENT,
-                     font=REG_FONT, relief="flat")
-        s.map("Treeview",
-              background=[("selected", ACCENT)],
-              foreground=[("selected", "#ffffff")])
-        s.map("Treeview.Heading", background=[("active", BTN_BG)])
-
-    # ── main UI ───────────────────────────────────────────────────────────────
-    def _build_ui(self):
-        # header
-        hdr = ttk.Frame(self, style="Dark.TFrame", padding=(16, 10))
-        hdr.pack(fill="x")
-        ttk.Label(hdr, text="⛏  Idle Planet Miner", style="Title.TLabel").pack(side="left")
-        ttk.Label(hdr, text="Recipe Value Calculator", style="Muted.TLabel").pack(side="left", padx=(8, 0), pady=(6, 0))
-        ttk.Button(hdr, text="💾  Save", style="Dark.TButton",
-                   command=self._save).pack(side="right", padx=4)
-        ttk.Button(hdr, text="↺  Reset Defaults", style="Dark.TButton",
-                   command=self._reset_defaults).pack(side="right", padx=4)
-        ttk.Button(hdr, text="🌌  Sell Galaxy", style="Dark.TButton",
-                   command=self._sell_galaxy).pack(side="right", padx=4)
-
-        nb = ttk.Notebook(self, style="Dark.TNotebook")
-        nb.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-
-        self._tab_dashboard(nb)
-        self._tab_ores(nb)
-        self._tab_alloys(nb)
-        self._tab_items(nb)
-        self._tab_projects(nb)
-        self._tab_planets(nb)
-
-    # ── tab: dashboard ────────────────────────────────────────────────────────
-    def _tab_dashboard(self, nb):
-        frame = ttk.Frame(nb, style="Dark.TFrame")
-        nb.add(frame, text="📊  Dashboard")
-
-        # filter row
-        flt = ttk.Frame(frame, style="Dark.TFrame", padding=(8, 6))
-        flt.pack(fill="x")
-
-        ttk.Label(flt, text="Show:", style="Dark.TLabel").pack(side="left", padx=(0, 6))
-        self._filter_var = tk.StringVar(value=self._prefs["sort"]["dashboard_filter"])
-        for val in ("All", "Alloys", "Items"):
-            ttk.Radiobutton(flt, text=val, variable=self._filter_var, value=val,
-                            command=self._on_dashboard_filter_change,
-                            style="Dark.TLabel").pack(side="left", padx=4)
-
-        ttk.Label(flt, text="Sort by:", style="Dark.TLabel").pack(side="left", padx=(20, 6))
-        self._sort_var = tk.StringVar(value=self._prefs["sort"]["dashboard_sort"])
-        sort_opts = [(c[0], c[1]) for c in COL_DEFS if c[1] not in ("name", "category")]
-        sort_combo = ttk.Combobox(flt, textvariable=self._sort_var,
-                                  values=[o[1] for o in sort_opts],
-                                  state="readonly", width=20, style="Dark.TCombobox")
-        sort_combo.pack(side="left")
-        sort_combo.bind("<<ComboboxSelected>>", self._on_dashboard_sort_change)
-
-        ttk.Label(flt, text="↑ higher = better", style="Muted.TLabel").pack(side="left", padx=6)
-        ttk.Button(flt, text="⟳ Recalculate", style="Dark.TButton",
-                   command=self._refresh_table).pack(side="right", padx=4)
-
-        # tree
-        tree_frame = ttk.Frame(frame, style="Dark.TFrame")
-        tree_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-
-        cols = [c[1] for c in COL_DEFS]
-        self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings", selectmode="browse")
-
-        saved_dash_w = self._prefs["col_widths"]["dashboard"]
-        for label, key, width, anchor in COL_DEFS:
-            self.tree.heading(key, text=label,
-                              command=lambda k=key: self._sort_by(k))
-            self.tree.column(key, width=saved_dash_w.get(key, width),
-                             anchor=anchor, stretch=False)
-
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        tree_frame.rowconfigure(0, weight=1)
-        tree_frame.columnconfigure(0, weight=1)
-
-        self.tree.tag_configure("row_a",  background=ROW_A)
-        self.tree.tag_configure("row_b",  background=ROW_B)
-        self.tree.tag_configure("alloy",  foreground=ACCENT2)
-        self.tree.tag_configure("item",   foreground="#c0a0ff")
-        self.tree.tag_configure("bad",    foreground=BAD)
-        self.tree.bind("<ButtonRelease-1>", self._on_dashboard_resize)
-
-        # legend / footer
-        leg = ttk.Frame(frame, style="Dark.TFrame", padding=(8, 2))
-        leg.pack(fill="x")
-        ttk.Label(leg, text="● Alloys (smelted)", foreground=ACCENT2,
-                  background=DARK_BG, font=FOOTER_FONT).pack(side="left", padx=8)
-        ttk.Label(leg, text="● Items (crafted)", foreground="#c0a0ff",
-                  background=DARK_BG, font=FOOTER_FONT).pack(side="left", padx=8)
-        ttk.Label(leg, text="● Negative profit", foreground=BAD,
-                  background=DARK_BG, font=FOOTER_FONT).pack(side="left", padx=8)
-        ttk.Label(leg,
-                  text="Tip: $/s vs Ore = profit per second if you sold raw ore instead",
-                  style="Muted.TLabel").pack(side="right", padx=8)
-
-    # ── tab: ores ─────────────────────────────────────────────────────────────
-    def _tab_ores(self, nb):
-        frame = ttk.Frame(nb, style="Dark.TFrame", padding=8)
-        nb.add(frame, text="🪨  Ores")
-        cols = [
-            ("Unlocked",       80, "w"),
-            ("Name",          150, "w"),
-            ("Base Price ($)", 100, "e"),
-            ("Stars",          60, "e"),
-            ("Market",        110, "w"),
-            ("Real Price ($)", 110, "e"),
-            ("Ore/s",          90, "e"),
+    # ── font ───────────────────────────────────────────────────────────────────
+    def _load_font(self):
+        """Load a font with broad unicode coverage.
+        Tries common system fonts; falls back to DPG default if none found.
+        """
+        candidates = [
+            r"C:\Windows\Fonts\segoeui.ttf",          # Windows – Segoe UI
+            r"C:\Windows\Fonts\arial.ttf",            # Windows – Arial
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
+            "/System/Library/Fonts/Helvetica.ttc",       # macOS
         ]
-        grid = SpreadsheetGrid(frame, cols, accent=ACCENT,
-                               on_change=lambda: self._commit_ores(grid),
-                               checkbox_cols={0},
-                               star_cols={3},
-                               slider_cols={4: (-2, 4)},
-                               readonly_cols={0, 5, 6})
-        grid.pack(fill="both", expand=True)
-        for name, entry in self.data["ores"].items():
-            unlocked  = ore_unlocked_from_planets(name, self.data)
-            realPrice = getRealPrice(entry["base_price"], entry.get("stars", 0), entry.get("market", 0), "ores")
-            ores      = ore_mining_rate(name, self.data)
-            grid.append_row([unlocked, name, fmt(entry["base_price"]),
-                             entry.get("stars", 0), entry.get("market", 0),
-                             fmt(realPrice), f"{ores:.4f}" if ores else "—"])
-        self._ore_grid = grid
-
-    def _commit_ores(self, grid):
-        new_ores = {}
-        for i, row in enumerate(grid._data):
-            name = str(row[1]).strip()
-            if not name:
-                continue
-            # Unlocked is derived from planet ownership, not editable
-            unlocked = ore_unlocked_from_planets(name, self.data)
-            row[0] = str(unlocked)  # keep display in sync
-            try:
-                price = get_price(row[2])
-            except (ValueError, IndexError):
-                price = 0.0
-            try:    stars  = int(float(row[3]))
-            except: stars  = 0
-            try:    market = int(float(row[4]))
-            except: market = 0
-            rp = getRealPrice(price, stars, market, "ores")
-            new_ores[name] = {"base_price": price, "unlocked": unlocked,
-                              "stars": stars, "market": market, "realPrice": rp}
-            row[2] = fmt(price)
-            row[5] = fmt(rp)
-            ors = ore_mining_rate(name, self.data)
-            row[6] = f"{ors:.4f}" if ors else "—"
-        self.data["ores"] = new_ores
-        save_data(self.data)
-        self._refresh_table()
+        font_path = next((p for p in candidates if os.path.exists(p)), None)
+        if font_path is None:
+            return  # use DPG default
+        with dpg.font_registry():
+            with dpg.font(font_path, 22) as fnt:
+                # Add extended unicode ranges needed:
+                # Basic Latin + Latin-1 (always included by default)
+                # General Punctuation: ellipsis, bullets, dashes
+                dpg.add_font_range(0x2000, 0x206F)
+                # Arrows: ↑ ↓ ← →
+                dpg.add_font_range(0x2190, 0x21FF)
+                # Mathematical operators: × − ÷
+                dpg.add_font_range(0x2200, 0x22FF)
+                # Misc symbols: ★ ☑ ☐ ✓
+                dpg.add_font_range(0x2600, 0x26FF)
+                # Dingbats: ✓ ✗
+                dpg.add_font_range(0x2700, 0x27BF)
+                # Block elements: ▲ ▼ ▌
+                dpg.add_font_range(0x2580, 0x259F)
+                # Geometric shapes: ▲ ▼ ◆
+                dpg.add_font_range(0x25A0, 0x25FF)
+        dpg.bind_font(fnt)
 
 
-    def _make_bonus_widget(self, tb, key: str, label: str,
-                           compute_fn, accent=None):
-        """Build a compact  Label: [computed] Manual: [entry]  strip in toolbar tb."""
-        color = accent or ACCENT2
-        ttk.Label(tb, text=f"{label}:", style="Muted.TLabel").pack(side="left", padx=(10, 2))
-        # computed display (read-only)
-        comp_var = tk.StringVar()
-        def _update_comp(*_):
-            comp_var.set(f"×{compute_fn(self.data):.3f}")
-        _update_comp()
-        ttk.Label(tb, textvariable=comp_var, foreground=color,
-                  background=DARK_BG, font=REG_FONT, width=8).pack(side="left")
-        ttk.Label(tb, text="Manual:", style="Muted.TLabel").pack(side="left", padx=(4, 2))
-        man_var = tk.StringVar(value=str(self.data.get("globals", {}).get(key, 1.0)))
-        ent = tk.Entry(tb, textvariable=man_var, bg=ENTRY_BG, fg=TEXT,
-                       insertbackground=TEXT, relief="flat",
-                       font=REG_FONT, width=6)
-        ent.pack(side="left")
-        def _commit(*_):
-            try:
-                val = float(man_var.get())
-                if val <= 0:
-                    val = 1.0
-                self.data.setdefault("globals", {})[key] = val
-                man_var.set(str(val))
-                _update_comp()
-                save_data(self.data)
-                self._refresh_table()
-                # Refresh time columns in alloy/item grids (lightweight)
-                self._refresh_alloy_times()
-                self._refresh_item_times()
-                if hasattr(self, "_planet_tree"):
-                    self._refresh_planets()
-            except ValueError:
-                man_var.set(str(self.data.get("globals", {}).get(key, 1.0)))
-        ent.bind("<Return>",   _commit)
-        ent.bind("<FocusOut>", _commit)
-        # also store update fn so we can refresh all displays
-        if not hasattr(self, "_bonus_update_fns"):
-            self._bonus_update_fns = []
-        self._bonus_update_fns.append(_update_comp)
+    # ── images ─────────────────────────────────────────────────────────────────
+    def _load_images(self):
+        """Load PNG/JPEG assets as DPG static textures."""
+        self._star_tex = None
+        self._chev_tex = {}   # dict: market_value (-2..4) -> texture id
+        self._chev_size = (40, 57)  # will be updated from actual image
+        self._load_chevrons()
+        star_path = os.path.join(SCRIPT_DIR, "Images/star.png")
+        if not os.path.exists(star_path):
+            self._gen_star_png(star_path)
+        try:
+            from PIL import Image
+            img  = Image.open(star_path).convert("RGBA")
+            w, h = img.size
+            flat = [c / 255.0 for px in img.getdata() for c in px]
+            with dpg.texture_registry():
+                self._star_tex = dpg.add_static_texture(
+                    width=w, height=h, default_value=flat)
+            self._star_size = (w, h)
+        #except Exception as e:
+        #    print(f"[warn] Could not load star.png: {e}")
+        finally:
+            pass
+            
 
-    def _refresh_alloy_times(self):
-        """Recompute bonus-adjusted smelt time col (col 3) without a full commit."""
-        if not hasattr(self, "_alloy_grid"):
+    def _load_chevrons(self):
+        """Load Chev-2.png .. Chev4.png as DPG static textures."""
+        try:
+            from PIL import Image
+        except ImportError:
+            print("[warn] Pillow not installed — chevron images unavailable")
             return
-        spd = max(0.001, global_smelt_speed(self.data))
-        for row in self._alloy_grid._data:
-            name = str(row[1]).strip()
-            raw_t = self.data["alloys"].get(name, {}).get("smelt_time")
-            if raw_t is not None:
-                row[3] = format_time(raw_t / spd)
-        self._alloy_grid._redraw()
-
-    def _refresh_item_times(self):
-        """Recompute bonus-adjusted craft time col (col 3) without a full commit."""
-        if not hasattr(self, "_item_grid"):
-            return
-        spd = max(0.001, global_craft_speed(self.data))
-        for row in self._item_grid._data:
-            name = str(row[1]).strip()
-            raw_t = self.data["items"].get(name, {}).get("craft_time")
-            if raw_t is not None:
-                row[3] = format_time(raw_t / spd)
-        self._item_grid._redraw()
-
-    # ── tab: alloys ───────────────────────────────────────────────────────────
-    def _tab_alloys(self, nb):
-        frame = ttk.Frame(nb, style="Dark.TFrame", padding=8)
-        nb.add(frame, text="⚙️  Alloys")
-        # 0=Unlocked 1=Name 2=BasePrice 3=SmeltTime(adj,ro) 4=Stars 5=Market 6=RealPrice 7..=recipe
-        cols = [
-            ("Unlocked",       80,  "w"),
-            ("Name",          160,  "w"),
-            ("Base Price ($)", 100,  "e"),
-            ("Smelt Time (s)", 100,  "e"),  # readonly: shows bonus-adjusted value
-            ("Stars",           60,  "e"),
-            ("Market",         110,  "w"),
-            ("Real Price ($)", 110,  "e"),
-            ("Ingredient 1",   150,  "w"),
-            ("Qty 1",           60,  "e"),
-            ("Ingredient 2",   150,  "w"),
-            ("Qty 2",           60,  "e"),
-            ("Ingredient 3",   150,  "w"),
-            ("Qty 3",           60,  "e"),
-        ]
-        def alloy_ingredients():
-            return sorted(self.data["ores"].keys())
-        dropdown_cols = {7: alloy_ingredients, 9: alloy_ingredients, 11: alloy_ingredients}
-        def _smelter_widget(tb):
-            ttk.Label(tb, text="Smelters:", style="Muted.TLabel").pack(side="left", padx=(4, 2))
-            ttk.Button(tb, text="−", style="Dark.TButton", width=2,
-                       command=lambda: (self._smelters.set(max(0, self._smelters.get()-1)),
-                                        self._refresh_table())).pack(side="left")
-            ttk.Label(tb, textvariable=self._smelters, style="Dark.TLabel",
-                      width=3, anchor="center").pack(side="left")
-            ttk.Button(tb, text="+", style="Dark.TButton", width=2,
-                       command=lambda: (self._smelters.set(self._smelters.get()+1),
-                                        self._refresh_table())).pack(side="left")
-            ttk.Separator(tb, orient="vertical").pack(side="left", fill="y", padx=8)
-            self._make_bonus_widget(tb, "smelt_speed", "Smelt Speed",
-                                    global_smelt_speed, accent=ACCENT2)
-        grid = SpreadsheetGrid(frame, cols, accent=ACCENT2,
-                               on_change=lambda: self._commit_alloys(grid),
-                               dropdown_cols=dropdown_cols,
-                               checkbox_cols={0},
-                               star_cols={4},
-                               slider_cols={5: (-2, 4)},
-                               readonly_cols={3, 6},  # 3=adj smelt time, 6=real price
-                               extra_widgets=[_smelter_widget])
-        grid.pack(fill="both", expand=True)
-        for name, entry in self.data["alloys"].items():
-            bp    = entry.get("base_price", 0)
-            stars = entry.get("stars", 0)
-            mkt   = entry.get("market", 0)
-            rp    = getRealPrice(bp, stars, mkt)
-            raw_t = entry.get("smelt_time", 60)
-            adj_t = raw_t / max(0.001, global_smelt_speed(self.data))
-            recipe_items = list(entry.get("recipe", {}).items())
-            row = [entry.get("unlocked", False), name,
-                   fmt(bp), format_time(adj_t),
-                   stars, mkt, fmt(rp)]
-            for i in range(3):
-                if i < len(recipe_items):
-                    row += [recipe_items[i][0], int(recipe_items[i][1])]
-                else:
-                    row += ["", ""]
-            grid.append_row(row)
-        self._alloy_grid = grid
-
-    def _commit_alloys(self, grid):
-        new_alloys = {}
-        for row in grid._data:   # direct reference so writes update the canvas
-            name = str(row[1]).strip()
-            if not name:
-                continue
-            unlocked = str(row[0]).lower() in ("true", "1", "yes")
-            try:
-                price = get_price(row[2])
-            except (ValueError, IndexError):
-                price = 0.0
-            # col 3 is readonly (shows adjusted time) — read raw from existing data
-            t = self.data["alloys"].get(name, {}).get("smelt_time", 999999)
-            try:    stars  = int(float(row[4]))
-            except: stars  = 0
-            try:    market = int(float(row[5]))
-            except: market = 0
-            rp    = getRealPrice(price, stars, market, "alloys")
-            adj_t = t / max(0.001, global_smelt_speed(self.data))
-            row[3] = f"{adj_t:.1f}s"  # keep display fresh
-            row[6] = fmt(rp)
-            recipe = {}
-            for slot in range(3):
-                base = 7 + slot * 2
+        with dpg.texture_registry():
+            for v in range(-2, 5):
+                path = os.path.join(SCRIPT_DIR, f"Images/Chev{v}.png")
+                if not os.path.exists(path):
+                    print(f"[warn] {path} not found")
+                    continue
                 try:
-                    ing = str(row[base]).strip()
-                    qty = float(row[base + 1])
-                    if ing:
-                        recipe[ing] = qty
-                except (ValueError, IndexError):
-                    pass
-            new_alloys[name] = {"base_price": price, "smelt_time": int(t),
-                                "recipe": recipe, "unlocked": unlocked,
-                                "stars": stars, "market": market, "realPrice": rp}
-        self.data["alloys"] = new_alloys
-        save_data(self.data)
-        self._refresh_table()
+                    img  = Image.open(path).convert("RGBA")
+                    w, h = img.size
+                    flat = [c / 255.0 for px in img.getdata() for c in px]
+                    self._chev_tex[v] = dpg.add_static_texture(
+                        width=w, height=h, default_value=flat)
+                    self._chev_size = (w, h)
+                except Exception as e:
+                    print(f"[warn] Could not load Chev{v}.png: {e}")
 
-    # ── tab: items ────────────────────────────────────────────────────────────
-    def _tab_items(self, nb):
-        frame = ttk.Frame(nb, style="Dark.TFrame", padding=8)
-        nb.add(frame, text="📦  Items")
-        # 0=Unlocked 1=Name 2=BasePrice 3=CraftTime(adj,ro) 4=Stars 5=Market 6=RealPrice 7..=recipe
-        cols = [
-            ("Unlocked",       80,  "w"),
-            ("Name",          160,  "w"),
-            ("Base Price ($)", 130,  "e"),
-            ("Craft Time",     80,  "e"),  # readonly: shows bonus-adjusted value
-            ("Stars",           60,  "e"),
-            ("Market",         110,  "w"),
-            ("Real Price ($)", 110,  "e"),
-            ("Ingredient 1",   150,  "w"),
-            ("Qty 1",           60,  "e"),
-            ("Ingredient 2",   150,  "w"),
-            ("Qty 2",           60,  "e"),
-            ("Ingredient 3",   150,  "w"),
-            ("Qty 3",           60,  "e"),
-        ]
-        def item_ingredients():
-            return sorted(list(self.data["ores"].keys()) +
-                          list(self.data["alloys"].keys()) +
-                          list(self.data["items"].keys()))
-        dropdown_cols = {7: item_ingredients, 9: item_ingredients, 11: item_ingredients}
-        def _crafter_widget(tb):
-            ttk.Label(tb, text="Crafters:", style="Muted.TLabel").pack(side="left", padx=(4, 2))
-            ttk.Button(tb, text="−", style="Dark.TButton", width=2,
-                       command=lambda: (self._crafters.set(max(0, self._crafters.get()-1)),
-                                        self._refresh_table())).pack(side="left")
-            ttk.Label(tb, textvariable=self._crafters, style="Dark.TLabel",
-                      width=3, anchor="center").pack(side="left")
-            ttk.Button(tb, text="+", style="Dark.TButton", width=2,
-                       command=lambda: (self._crafters.set(self._crafters.get()+1),
-                                        self._refresh_table())).pack(side="left")
-            ttk.Separator(tb, orient="vertical").pack(side="left", fill="y", padx=8)
-            self._make_bonus_widget(tb, "craft_speed", "Craft Speed",
-                                    global_craft_speed, accent="#c0a0ff")
-        grid = SpreadsheetGrid(frame, cols, accent="#c0a0ff",
-                               on_change=lambda: self._commit_items(grid),
-                               dropdown_cols=dropdown_cols,
-                               checkbox_cols={0},
-                               star_cols={4},
-                               slider_cols={5: (-2, 4)},
-                               readonly_cols={3, 6},  # 3=adj craft time, 6=real price
-                               extra_widgets=[_crafter_widget])
-        grid.pack(fill="both", expand=True)
-        for name, entry in self.data["items"].items():
-            bp    = entry.get("base_price", 0)
-            stars = entry.get("stars", 0)
-            mkt   = entry.get("market", 0)
-            rp    = getRealPrice(bp, stars, mkt)
-            raw_t = entry.get("craft_time", 120)
-            adj_t = raw_t / max(0.001, global_craft_speed(self.data))
-            recipe_items = list(entry.get("recipe", {}).items())
-            row = [entry.get("unlocked", False), name,
-                   fmt(bp), format_time(adj_t),
-                   stars, mkt, fmt(rp)]
-            for i in range(3):
-                if i < len(recipe_items):
-                    row += [recipe_items[i][0], recipe_items[i][1]]
-                else:
-                    row += ["", ""]
-            grid.append_row(row)
-        self._item_grid = grid
+    def _gen_star_png(self, path: str):
+        """Generate a gold star PNG programmatically (no dependencies)."""
+        import struct, zlib, math
+        W = H = 32
+        cx = cy = W / 2 - 0.5
+        def star_poly():
+            pts = []
+            for i in range(10):
+                r = 7.0 if i % 2 == 0 else 3.0
+                a = math.pi / 2 + i * math.pi / 5
+                pts.append((cx + r * math.cos(a), cy - r * math.sin(a)))
+            return pts
+        def in_poly(px, py, poly):
+            n = len(poly); inside = False; j = n - 1
+            for i in range(n):
+                xi, yi = poly[i]; xj, yj = poly[j]
+                if ((yi > py) != (yj > py)) and px < (xj-xi)*(py-yi)/(yj-yi)+xi:
+                    inside = not inside
+                j = i
+            return inside
+        pts = star_poly()
+        gold = [240, 192, 64]
+        rgba = []
+        for y in range(H):
+            for x in range(W):
+                rgba += gold + [255] if in_poly(x, y, pts) else [0, 0, 0, 0]
+        def chunk(tag, data):
+            crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+            return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+        rows = b""
+        for y in range(H):
+            rows += b"\x00"
+            for x in range(W):
+                i = (y * W + x) * 4
+                rows += bytes(rgba[i:i+3])  # RGB only for PNG
+        png = (b"\x89PNG\r\n\x1a\n"
+               + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0))
+               + chunk(b"IDAT", zlib.compress(rows))
+               + chunk(b"IEND", b""))
+        # Now store as RGBA for DPG
+        with open(path, "wb") as f:
+            # Write a proper RGBA PNG
+            rows2 = b""
+            for y in range(H):
+                rows2 += b"\x00"
+                for x in range(W):
+                    i = (y*W+x)*4
+                    rows2 += bytes(rgba[i:i+4])
+            png2 = (b"\x89PNG\r\n\x1a\n"
+                    + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 6, 0, 0, 0))
+                    + chunk(b"IDAT", zlib.compress(rows2))
+                    + chunk(b"IEND", b""))
+            f.write(png2)
 
-    def _commit_items(self, grid):
-        new_items = {}
-        for row in grid._data:   # direct reference so writes update the canvas
-            name = str(row[1]).strip()
-            if not name:
-                continue
-            unlocked = str(row[0]).lower() in ("true", "1", "yes")
-            try:
-                price = get_price(row[2])
-            except (ValueError, IndexError):
-                price = 0
-            # col 3 is readonly (shows adjusted time) — read raw from existing data
-            t = self.data["items"].get(name, {}).get("craft_time", 9999999)
-            try:    stars  = int(float(row[4]))
-            except: stars  = 0
-            try:    market = int(float(row[5]))
-            except: market = 0
-            rp    = getRealPrice(price, stars, market, "items")
-            adj_t = t / max(0.001, global_craft_speed(self.data))
-            row[3] = f"{adj_t:.1f}s"  # keep display fresh
-            row[6] = fmt(rp)
-            recipe = {}
-            for slot in range(3):
-                base = 7 + slot * 2
-                try:
-                    ing = str(row[base]).strip()
-                    qty = int(row[base + 1])
-                    if ing:
-                        recipe[ing] = qty
-                except (ValueError, IndexError):
-                    pass
-            new_items[name] = {"base_price": price, "craft_time": t,
-                               "recipe": recipe, "unlocked": unlocked,
-                               "stars": stars, "market": market, "realPrice": rp}
-        self.data["items"] = new_items
-        save_data(self.data)
-        self._refresh_table()
+    def _decode_png(self, raw: bytes):
+        """Minimal PNG decoder returning (w, h, rgba_bytes). RGBA/RGB only."""
+        import struct, zlib
+        sig = raw[:8]
+        assert sig == b"\x89PNG\r\n\x1a\n"
+        pos = 8; w = h = 0; idat_chunks = []; color_type = 2
+        while pos < len(raw):
+            length = struct.unpack(">I", raw[pos:pos+4])[0]
+            tag  = raw[pos+4:pos+8]
+            data = raw[pos+8:pos+8+length]
+            if tag == b"IHDR":
+                w, h = struct.unpack(">II", data[:8])
+                color_type = data[9]
+            elif tag == b"IDAT":
+                idat_chunks.append(data)
+            elif tag == b"IEND":
+                break
+            pos += 12 + length
+        raw_img = zlib.decompress(b"".join(idat_chunks))
+        # Un-filter
+        bpp = 4 if color_type == 6 else 3
+        stride = w * bpp
+        rows = []; pos = 0
+        prev = bytes(stride)
+        for _ in range(h):
+            flt  = raw_img[pos]; row = bytearray(raw_img[pos+1:pos+1+stride]); pos += 1 + stride
+            if flt == 0: pass
+            elif flt == 1:
+                for i in range(bpp, stride): row[i] = (row[i] + row[i-bpp]) & 0xFF
+            elif flt == 2:
+                for i in range(stride): row[i] = (row[i] + prev[i]) & 0xFF
+            elif flt == 3:
+                for i in range(stride):
+                    a = row[i-bpp] if i >= bpp else 0
+                    row[i] = (row[i] + (a + prev[i]) // 2) & 0xFF
+            elif flt == 4:
+                for i in range(stride):
+                    a = row[i-bpp] if i >= bpp else 0
+                    b2 = prev[i]; c = prev[i-bpp] if i >= bpp else 0
+                    p = a + b2 - c; pa=abs(p-a); pb=abs(p-b2); pc=abs(p-c)
+                    pr = a if pa<=pb and pa<=pc else (b2 if pb<=pc else c)
+                    row[i] = (row[i] + pr) & 0xFF
+            rows.append(bytes(row)); prev = bytes(row)
+        rgba = bytearray()
+        for row in rows:
+            for i in range(0, len(row), bpp):
+                rgba += row[i:i+3]
+                rgba += bytes([row[i+3]]) if bpp == 4 else bytes([255])
+        return w, h, bytes(rgba)
 
-    # ── tab: projects ────────────────────────────────────────────────────────────
-    def _tab_projects(self, nb):
-        frame = ttk.Frame(nb, style="Dark.TFrame", padding=8)
-        nb.add(frame, text="🧪 Projects")
+    # ── theme ──────────────────────────────────────────────────────────────────
+    def _theme(self):
+        with dpg.theme() as th:
+            with dpg.theme_component(dpg.mvAll):
+                for col, val in [
+                    (dpg.mvThemeCol_WindowBg,    C_BG),
+                    (dpg.mvThemeCol_ChildBg,     C_PANEL),
+                    (dpg.mvThemeCol_TitleBg,     C_PANEL),
+                    (dpg.mvThemeCol_TitleBgActive,C_BTN),
+                    (dpg.mvThemeCol_Tab,         C_PANEL),
+                    (dpg.mvThemeCol_TabActive,   C_BTN),
+                    (dpg.mvThemeCol_TabHovered,  C_ACCENT),
+                    (dpg.mvThemeCol_Header,      C_BTN),
+                    (dpg.mvThemeCol_HeaderHovered,(90,78,210,255)),
+                    (dpg.mvThemeCol_HeaderActive, C_ACCENT),
+                    (dpg.mvThemeCol_Button,      C_BTN),
+                    (dpg.mvThemeCol_ButtonHovered,(90,78,210,255)),
+                    (dpg.mvThemeCol_ButtonActive, C_ACCENT),
+                    (dpg.mvThemeCol_FrameBg,     C_ENTRY),
+                    (dpg.mvThemeCol_FrameBgHovered,(60,60,90,255)),
+                    (dpg.mvThemeCol_CheckMark,   C_TEAL),
+                    (dpg.mvThemeCol_Text,        C_TEXT),
+                    (dpg.mvThemeCol_TableRowBg,  C_ROW_A),
+                    (dpg.mvThemeCol_TableRowBgAlt,C_ROW_B),
+                    (dpg.mvThemeCol_TableBorderLight,(60,60,80,255)),
+                    (dpg.mvThemeCol_TableHeaderBg,C_PANEL),
+                    (dpg.mvThemeCol_ScrollbarBg, C_BG),
+                    (dpg.mvThemeCol_ScrollbarGrab,C_BTN),
+                    (dpg.mvThemeCol_PopupBg,     C_PANEL),
+                ]:
+                    dpg.add_theme_color(col, val)
+                dpg.add_theme_style(dpg.mvStyleVar_FrameRounding,  3)
+                dpg.add_theme_style(dpg.mvStyleVar_WindowRounding,  4)
+                dpg.add_theme_style(dpg.mvStyleVar_TabRounding,     4)
+                dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing,     6, 4)
+                dpg.add_theme_style(dpg.mvStyleVar_CellPadding,     4, 3)
+        dpg.bind_theme(th)
 
-        # ── toolbar / sort controls ───────────────────────────────────────────
-        tb = ttk.Frame(frame, style="Dark.TFrame")
-        tb.pack(fill="x", pady=(0, 6))
-        ttk.Label(tb, text="Sort by:", style="Dark.TLabel").pack(side="left", padx=(0, 6))
-        self._proj_sort_var = tk.StringVar(value=self._prefs["sort"]["projects_sort"])
-        for val, label in (("name", "Name"), ("cost", "Cost"), ("time", "Time")):
-            ttk.Radiobutton(tb, text=label, variable=self._proj_sort_var, value=val,
-                            command=self._on_proj_sort_change,
-                            style="Dark.TLabel").pack(side="left", padx=4)
-        ttk.Button(tb, text="⟳ Refresh", style="Dark.TButton",
-                   command=self._refresh_projects).pack(side="left", padx=8)
-        ttk.Label(tb,
-                  text='☑ Researched  ·  greyed = prereq not met  ·  prereq: single name, or ["A","B"] means A OR B',
-                  style="Muted.TLabel").pack(side="right", padx=8)
+    def _resize(self, *_):
+        w = dpg.get_viewport_client_width()
+        h = dpg.get_viewport_client_height()
+        dpg.set_item_pos("main", [0, 0])
+        dpg.set_item_width("main", w)
+        dpg.set_item_height("main", h)
 
-        # ── project tree (read-only display + researched checkbox via click) ──
-        proj_tree_frame = ttk.Frame(frame, style="Dark.TFrame")
-        proj_tree_frame.pack(fill="both", expand=True)
+    # ── header ─────────────────────────────────────────────────────────────────
+    def _hdr(self):
+        with dpg.group(horizontal=True):
+            dpg.add_text("Idle Planet Miner", color=C_ACCENT)
+            dpg.add_text("  Recipe Value Calculator", color=C_MUTED)
+            dpg.add_spacer(width=1)
+            dpg.add_button(label="Save",           callback=self._cb_save)
+            dpg.add_button(label="Reset Defaults",  callback=self._cb_reset)
+            dpg.add_button(label="Sell Galaxy",    callback=self._cb_sell_galaxy)
 
-        proj_cols = ("researched", "name", "cost", "time", "prereq", "recipe_display")
-        self._proj_tree = ttk.Treeview(proj_tree_frame, columns=proj_cols,
-                                       show="headings", selectmode="browse")
-        self._proj_tree.heading("researched",     text="Done")
-        self._proj_tree.heading("name",           text="Project",
-                                command=lambda: self._proj_sort("name"))
-        self._proj_tree.heading("cost",           text="Cost ($)",
-                                command=lambda: self._proj_sort("cost"))
-        self._proj_tree.heading("time",           text="Time",
-                                command=lambda: self._proj_sort("time"))
-        self._proj_tree.heading("prereq",         text="Prereq")
-        self._proj_tree.heading("recipe_display", text="Ingredients")
+    # ── helpers: bonus entry strip ────────────────────────────────────────────
+    def _bonus_strip(self, key, label, fn_comp, tag_comp, tag_manual, cb):
+        dpg.add_text(f"{label}:", color=C_MUTED)
+        dpg.add_text(f"×{fn_comp(self.state):.3f}", color=C_TEAL, tag=tag_comp)
+        dpg.add_text(" Manual:", color=C_MUTED)
+        dpg.add_input_text(default_value=str(self.state["globals"][key]),
+                           width=58, tag=tag_manual, on_enter=True,
+                           user_data=key, callback=cb)
+        dpg.add_spacer(width=14)
 
-        _pw = self._prefs["col_widths"]["projects"]
-        self._proj_tree.column("researched",     width=_pw.get("researched",     55),  anchor="center", stretch=False)
-        self._proj_tree.column("name",           width=_pw.get("name",           293), anchor="w",      stretch=False)
-        self._proj_tree.column("cost",           width=_pw.get("cost",           113), anchor="e",      stretch=False)
-        self._proj_tree.column("time",           width=_pw.get("time",           100), anchor="e",      stretch=False)
-        self._proj_tree.column("prereq",         width=_pw.get("prereq",         200), anchor="w",      stretch=False)
-        self._proj_tree.column("recipe_display", width=_pw.get("recipe_display", 500), anchor="w",      stretch=True)
+    def _machines_strip(self):
+        for which, label in [("smelters","Smelters"),("crafters","Crafters")]:
+            dpg.add_text(f"{label}:", color=C_MUTED)
+            dpg.add_button(label=" - ", width=28,
+                           user_data=(which,-1), callback=self._cb_adj_machines)
+            dpg.add_text(str(self.state.get(which,1)),
+                         tag=f"lbl_{which}", color=C_TEAL)
+            dpg.add_button(label=" + ", width=28,
+                           user_data=(which,1),  callback=self._cb_adj_machines)
+            dpg.add_spacer(width=10)
 
-        vsb = ttk.Scrollbar(proj_tree_frame, orient="vertical",   command=self._proj_tree.yview)
-        hsb = ttk.Scrollbar(proj_tree_frame, orient="horizontal", command=self._proj_tree.xview)
-        self._proj_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+    def _cb_adj_machines(self, s, v, ud):
+        which, delta = ud
+        self.state[which] = max(1, self.state.get(which,1)+delta)
+        dpg.set_value(f"lbl_{which}", str(self.state[which]))
+        save_state(self.state)
+        self._refresh_dashboard()
 
-        self._proj_tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        proj_tree_frame.rowconfigure(0, weight=1)
-        proj_tree_frame.columnconfigure(0, weight=1)
+    # ── DASHBOARD ──────────────────────────────────────────────────────────────
+    _DCOLS = [
+        ("Name",         "name",              160),
+        ("Type",         "category",           55),
+        ("Output $",     "output_value",       105),
+        ("Input Cost",   "direct_cost",        105),
+        ("Ore Cost",     "ore_cost",           105),
+        ("Profit/Input", "profit_direct",      105),
+        ("Profit/Ore",   "profit_ore",         105),
+        ("Time",         "craft_time",          72),
+        ("Smelt",        "smelt_raw",           72),
+        ("Craft",        "craft_raw",           72),
+        ("Total",        "total_time",          72),
+        ("$/s Out",      "vps_output",          92),
+        ("$/s Input",    "vps_profit_direct",   92),
+        ("$/s Ore",      "vps_profit_ore",      92),
+    ]
+    _TIME_KEYS  = {"craft_time","smelt_raw","craft_raw","total_time"}
+    _MONEY_KEYS = {"output_value","direct_cost","ore_cost","profit_direct",
+                   "profit_ore","vps_output","vps_profit_direct","vps_profit_ore"}
 
-        # tag styles — row_a/row_b set background only so state foreground wins
-        self._proj_tree.tag_configure("row_a",      background=ROW_A)
-        self._proj_tree.tag_configure("row_b",      background=ROW_B)
-        self._proj_tree.tag_configure("available",  foreground=TEXT)
-        self._proj_tree.tag_configure("locked",     foreground="#555570")
-        self._proj_tree.tag_configure("researched", foreground=ACCENT2)
+    def _tab_dash(self):
+        with dpg.group(horizontal=True):
+            dpg.add_text("Show:", color=C_MUTED)
+            dpg.add_radio_button(
+                items=["All","Alloys","Items"],
+                default_value=self.prefs.get("dashboard_filter","All"),
+                horizontal=True, tag="dash_filter",
+                callback=lambda s,v: (self.prefs.update({"dashboard_filter":v}),
+                                      save_prefs(self.prefs),
+                                      self._refresh_dashboard()))
+            dpg.add_spacer(width=18)
+            dpg.add_text("Sort:", color=C_MUTED)
+            sort_keys = [c[1] for c in self._DCOLS if c[1] not in ("name","category")]
+            dpg.add_combo(items=sort_keys, width=180, tag="dash_sort",
+                          default_value=self.prefs.get("dashboard_sort","vps_profit_ore"),
+                          callback=lambda s,v: (self.prefs.update({"dashboard_sort":v}),
+                                                save_prefs(self.prefs),
+                                                self._refresh_dashboard()))
+            dpg.add_spacer(width=18)
+            self._machines_strip()
 
-        # clicking the Researched column toggles; ButtonRelease also saves col widths
-        self._proj_tree.bind("<ButtonRelease-1>", self._on_proj_tree_click_and_resize)
+        with dpg.table(tag="dash_tbl", header_row=True, row_background=True,
+                       borders_innerH=True, borders_outerH=True,
+                       borders_innerV=True, borders_outerV=True,
+                       scrollY=True, scrollX=True, resizable=True,
+                       policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
+            for lbl, key, w in self._DCOLS:
+                dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
-        self._refresh_projects()
+    def _refresh_dashboard(self):
+        dpg.delete_item("dash_tbl", children_only=True, slot=1)
+        rows  = analyze_all(self.base, self.state)
+        flt   = self.prefs.get("dashboard_filter","All")
+        sort  = self.prefs.get("dashboard_sort","vps_profit_ore")
+        if flt == "Alloys": rows = [r for r in rows if r["category"]=="alloys"]
+        if flt == "Items":  rows = [r for r in rows if r["category"]=="items"]
+        rows  = [r for r in rows if r["unlocked"]]
+        rows.sort(key=lambda r: r.get(sort,0), reverse=True)
+        for r in rows:
+            with dpg.table_row(parent="dash_tbl"):
+                for _, key, _ in self._DCOLS:
+                    v = r.get(key,"")
+                    if key == "category":
+                        txt = "Alloy" if v=="alloys" else "Item"
+                        col = C_TEAL if v=="alloys" else (192,160,255,255)
+                    elif key in self._MONEY_KEYS:
+                        txt = fmt(v)
+                        col = C_BAD if "profit" in key and v<0 else C_TEXT
+                    elif key in self._TIME_KEYS:
+                        txt = fmt_time(v); col = C_TEXT
+                    else:
+                        txt = str(v); col = C_TEXT
+                    dpg.add_text(txt, color=col)
 
-    # ── project helpers ───────────────────────────────────────────────────────
+    # ── ORES ───────────────────────────────────────────────────────────────────
+    def _tab_ores(self):
+        with dpg.table(tag="ores_tbl", header_row=True, row_background=True,
+                       borders_innerH=True, borders_outerH=True,
+                       borders_innerV=True, borders_outerV=True,
+                       scrollY=True, resizable=True,
+                       policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
+            for lbl, w in [("✓",28),("Ore",140),("Base $",105),
+                            ("Stars",80),("Market",90),("Real $",105),("Ore/s",82)]:
+                dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
+
+    def _refresh_ores(self):
+        dpg.delete_item("ores_tbl", children_only=True, slot=1)
+        for ore, bd in self.base["ores"].items():
+            st = self.state["ores"][ore]
+            bp = bd["base_price"]; stars = st.get("stars",0); mkt = st.get("market",0)
+            rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
+            unl = ore_unlocked(ore, self.base, self.state)
+            ors = ore_mining_rate(ore, self.base, self.state)
+            with dpg.table_row(parent="ores_tbl"):
+                dpg.add_text("✓" if unl else "·", color=C_TEAL if unl else C_MUTED)
+                dpg.add_text(ore)
+                dpg.add_text(fmt(bp), color=C_MUTED)
+                with dpg.group(horizontal=True):
+                    self._star_widget(f"ost_{ore}", stars)
+                    dpg.add_button(label="+", width=22,
+                                   user_data=("ores",ore,"stars"),
+                                   callback=self._cb_stars)
+                with dpg.group(horizontal=True):
+                    self._market_widget(f"mkt_or_{ore}", mkt, ("ores",ore,"market"))
+                dpg.add_text(fmt(rp), tag=f"orp_{ore}", color=C_TEAL)
+                dpg.add_text(f"{ors:.4f}" if ors else "—",
+                             tag=f"ors_{ore}", color=C_MUTED)
+
+    # ── ALLOYS ─────────────────────────────────────────────────────────────────
+    def _tab_alloys(self):
+        with dpg.group(horizontal=True):
+            self._bonus_strip("smelt_speed","Smelt Speed",global_smelt_speed,
+                              "alc_comp","alc_man",self._cb_smelt_speed)
+        with dpg.table(tag="alloys_tbl", header_row=True, row_background=True,
+                       borders_innerH=True, borders_outerH=True,
+                       borders_innerV=True, borders_outerV=True,
+                       scrollY=True, scrollX=True, resizable=True,
+                       policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
+            for lbl, w in [("✓",28),("Alloy",150),("Base $",105),("Time",75),
+                            ("Stars",80),("Market",115),("Real $",105),("Recipe",300)]:
+                dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
+
+    def _cb_smelt_speed(self, s, v, ud):
+        try: val = max(0.01, float(v))
+        except: return
+        self.state["globals"]["smelt_speed"] = val
+        dpg.set_value("alc_comp", f"×{val:.3f}")
+        dpg.set_value("alc_man",  str(val))
+        save_state(self.state)
+        self._refresh_alloys(); self._refresh_dashboard()
+
+    def _refresh_alloys(self):
+        dpg.delete_item("alloys_tbl", children_only=True, slot=1)
+        ss = max(0.001, global_smelt_speed(self.state))
+        dpg.set_value("alc_comp", f"×{ss:.3f}")
+        for name, bd in self.base["alloys"].items():
+            st = self.state["alloys"][name]
+            bp = bd["base_price"]; stars = st.get("stars",0); mkt = st.get("market",0)
+            rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
+            unl = st.get("unlocked",False)
+            at  = bd["smelt_time"] / ss
+            rec = ", ".join(f"{q:g}×{i}" for i,q in bd["recipe"].items())
+            with dpg.table_row(parent="alloys_tbl"):
+                dpg.add_checkbox(default_value=unl,
+                                 user_data=("alloys",name,"unlocked"),
+                                 callback=self._cb_unlocked)
+                dpg.add_text(name)
+                dpg.add_text(fmt(bp), color=C_MUTED)
+                dpg.add_text(fmt_time(at), color=C_MUTED)
+                with dpg.group(horizontal=True):
+                    self._star_widget(f"ast_{name}", stars)
+                    dpg.add_button(label="+", width=22,
+                                   user_data=("alloys",name,"stars"),
+                                   callback=self._cb_stars)
+                with dpg.group(horizontal=True):
+                    self._market_widget(f"mkt_al_{name}", mkt, ("alloys",name,"market"))
+                dpg.add_text(fmt(rp), tag=f"alp_{name}", color=C_TEAL)
+                dpg.add_text(rec, color=C_MUTED)
+
+    # ── ITEMS ──────────────────────────────────────────────────────────────────
+    def _tab_items(self):
+        with dpg.group(horizontal=True):
+            self._bonus_strip("craft_speed","Craft Speed",global_craft_speed,
+                              "itc_comp","itc_man",self._cb_craft_speed)
+        with dpg.table(tag="items_tbl", header_row=True, row_background=True,
+                       borders_innerH=True, borders_outerH=True,
+                       borders_innerV=True, borders_outerV=True,
+                       scrollY=True, scrollX=True, resizable=True,
+                       policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
+            for lbl, w in [("✓",28),("Item",150),("Base $",105),("Time",75),
+                            ("Stars",80),("Market",115),("Real $",105),("Recipe",300)]:
+                dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
+
+    def _cb_craft_speed(self, s, v, ud):
+        try: val = max(0.01, float(v))
+        except: return
+        self.state["globals"]["craft_speed"] = val
+        dpg.set_value("itc_comp", f"×{val:.3f}")
+        dpg.set_value("itc_man",  str(val))
+        save_state(self.state)
+        self._refresh_items(); self._refresh_dashboard()
+
+    def _refresh_items(self):
+        dpg.delete_item("items_tbl", children_only=True, slot=1)
+        cs = max(0.001, global_craft_speed(self.state))
+        dpg.set_value("itc_comp", f"×{cs:.3f}")
+        for name, bd in self.base["items"].items():
+            st = self.state["items"][name]
+            bp = bd["base_price"]; stars = st.get("stars",0); mkt = st.get("market",0)
+            rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
+            unl = st.get("unlocked",False)
+            at  = bd["craft_time"] / cs
+            rec = ", ".join(f"{q:g}×{i}" for i,q in bd["recipe"].items())
+            with dpg.table_row(parent="items_tbl"):
+                dpg.add_checkbox(default_value=unl,
+                                 user_data=("items",name,"unlocked"),
+                                 callback=self._cb_unlocked)
+                dpg.add_text(name)
+                dpg.add_text(fmt(bp), color=C_MUTED)
+                dpg.add_text(fmt_time(at), color=C_MUTED)
+                with dpg.group(horizontal=True):
+                    self._star_widget(f"ist_{name}", stars)
+                    dpg.add_button(label="+", width=22,
+                                   user_data=("items",name,"stars"),
+                                   callback=self._cb_stars)
+                with dpg.group(horizontal=True):
+                    self._market_widget(f"mkt_it_{name}", mkt, ("items",name,"market"))
+                dpg.add_text(fmt(rp), tag=f"itp_{name}", color=C_TEAL)
+                dpg.add_text(rec, color=C_MUTED)
+
+    # ── PROJECTS ───────────────────────────────────────────────────────────────
+    def _tab_projects(self):
+        with dpg.group(horizontal=True):
+            dpg.add_text("Sort:", color=C_MUTED)
+            dpg.add_radio_button(items=["name","cost","time"],
+                                 default_value=self.prefs.get("projects_sort","time"),
+                                 horizontal=True, tag="proj_sort",
+                                 callback=lambda s,v: (self.prefs.update({"projects_sort":v}),
+                                                        save_prefs(self.prefs),
+                                                        self._refresh_projects()))
+        with dpg.table(tag="proj_tbl", header_row=True, row_background=True,
+                       borders_innerH=True, borders_outerH=True,
+                       borders_innerV=True, borders_outerV=True,
+                       scrollY=True, scrollX=True, resizable=True,
+                       policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
+            for lbl, w in [("✓",28),("Project",200),("Cost",110),("Time",82),
+                            ("Prereq",170),("Ingredients",380)]:
+                dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
     def _refresh_projects(self):
-        """Rebuild the project treeview from self.data['projects']."""
-        tree = self._proj_tree
-        for item in tree.get_children():
-            tree.delete(item)
+        dpg.delete_item("proj_tbl", children_only=True, slot=1)
+        sort = self.prefs.get("projects_sort","time")
+        sm = self.state.get("smelters",1); cr = self.state.get("crafters",1)
 
-        projects = self.data.get("projects", {})
-        sort_key = self._proj_sort_var.get()
+        def sk(item):
+            n, bd = item
+            if sort=="cost":
+                return sum(effective_price(i,self.base,self.state)*q
+                           for i,q in bd["recipe"].items())
+            if sort=="time":
+                st2=0; ct2=0
+                for i,q in bd["recipe"].items():
+                    c2 = "alloys" if i in self.base["alloys"] else ("items" if i in self.base["items"] else None)
+                    if c2:
+                        st2 += total_smelt_time(i,c2,self.base,self.state)*q
+                        ct2 += total_craft_time(i,c2,self.base,self.state)*q
+                return wall_time(st2,ct2,sm,cr)
+            return n.lower()
 
-        def row_sort_key(item):
-            name, entry = item
-            if sort_key == "cost":
-                return project_cost(entry.get("Recipe", {}), self.data)
-            if sort_key == "time":
-                return project_time(entry.get("Recipe", {}), self.data,
-                                   max(1, self._smelters.get()),
-                                   max(1, self._crafters.get()))
-            return name.lower()
+        for name, bd in sorted(self.base["projects"].items(), key=sk):
+            rec = bd["recipe"]; pre = bd.get("prereq","")
+            met  = prereq_met(pre, self.state)
+            done = self.state["projects"].get(name,{}).get("researched",False)
+            cost = sum(effective_price(i,self.base,self.state)*q for i,q in rec.items())
+            st2=0; ct2=0
+            for i,q in rec.items():
+                c2 = "alloys" if i in self.base["alloys"] else ("items" if i in self.base["items"] else None)
+                if c2:
+                    st2 += total_smelt_time(i,c2,self.base,self.state)*q
+                    ct2 += total_craft_time(i,c2,self.base,self.state)*q
+            wt  = wall_time(st2,ct2,sm,cr)
+            pre_str = (" OR ".join(pre) if isinstance(pre,list) else pre) or "—"
+            rec_str = ", ".join(f"{q:g}×{i}" for i,q in rec.items())
+            col = C_TEAL if done else ((85,85,112,255) if not met else C_TEXT)
+            with dpg.table_row(parent="proj_tbl"):
+                dpg.add_checkbox(default_value=done, user_data=name,
+                                 callback=self._cb_proj_check)
+                dpg.add_text(name,    color=col)
+                dpg.add_text(fmt(cost),color=col)
+                dpg.add_text(fmt_time(wt), color=col)
+                dpg.add_text(pre_str, color=col)
+                dpg.add_text(rec_str, color=col)
 
-        rows = sorted(projects.items(), key=row_sort_key)
-
-        for i, (name, entry) in enumerate(rows):
-            prereqs  = entry.get("Prereq", "")
-            recipe   = entry.get("Recipe", {})
-            cost     = project_cost(recipe, self.data)
-            met      = project_prereq_met(prereqs, self.data)
-            researched = entry.get("Researched", False)
-
-            # Format prereq display
-            if isinstance(prereqs, list):
-                prereq_str = " OR ".join(prereqs)
-            else:
-                prereq_str = prereqs or "—"
-
-            # Format recipe display
-            recipe_str = ",  ".join(
-                f"{qty:,g} {ing}" for ing, qty in recipe.items()
-            )
-
-            done_glyph = "☑" if researched else "☐"
-            cost_str   = fmt(cost) if cost > 0 else "?"
-            t          = project_time(recipe, self.data,
-                                      max(1, self._smelters.get()),
-                                      max(1, self._crafters.get()))
-            time_str   = f"{int(t)}s" if t > 1 else "—"
-
-            base_tag = "row_a" if i % 2 == 0 else "row_b"
-            if researched:
-                tags = (base_tag, "researched")
-            elif not met:
-                tags = (base_tag, "locked")
-            else:
-                tags = (base_tag, "available")
-
-            tree.insert("", "end", iid=name, tags=tags,
-                        values=(done_glyph, name, cost_str, time_str, prereq_str, recipe_str))
-
-    def _proj_sort(self, key: str):
-        self._proj_sort_var.set(key)
-        self._prefs["sort"]["projects_sort"] = key
-        save_prefs(self._prefs)
+    def _cb_proj_check(self, s, v, ud):
+        self.state["projects"][ud]["researched"] = v
+        save_state(self.state)
         self._refresh_projects()
+        self._refresh_dashboard()
 
-    def _proj_tree_click(self, event):
-        """Toggle Researched when clicking the Done column."""
-        col  = self._proj_tree.identify_column(event.x)
-        item = self._proj_tree.identify_row(event.y)
-        if item and col == "#1":
-            self._proj_toggle_researched(item)
+    # ── PLANETS ────────────────────────────────────────────────────────────────
+    def _tab_planets(self):
+        with dpg.group(horizontal=True):
+            for key, label, fn, tc, tm in [
+                ("mining","Mining Rate",global_mining_bonus,"gmc","gmm"),
+                ("speed", "Ship Speed", global_speed_bonus, "gsc","gsm"),
+                ("cargo", "Ship Cargo", global_cargo_bonus, "gcc","gcm"),
+            ]:
+                self._bonus_strip(key, label, fn, tc, tm, self._cb_planet_global)
+        with dpg.table(tag="planet_tbl", header_row=False, row_background=True,
+                       borders_innerH=True, borders_outerH=True,
+                       borders_innerV=True, borders_outerV=True,
+                       scrollY=True, scrollX=True, resizable=True,
+                       policy=dpg.mvTable_SizingFixedFit, freeze_rows=2):
+            # 19 columns: 11 main + 3 probe + 3 colony + 2 separator
+            for w in [
+                28, 105, 45, 50, 210,   # #, Planet, Scope, Owned, Ores
+                80, 72,                 # M.Lvl, Min/s
+                80, 62,                 # S.Lvl, Spd
+                80, 50,                 # C.Lvl, Crg
+                62, 62, 62,             # Probe: Mng, Spd, Crg
+                5,
+                62, 62, 62,             # Colony: Mng, Spd, Crg
+                5,
+            ]:
+                dpg.add_table_column(label="", width_fixed=True, init_width_or_weight=w)
 
-    def _proj_toggle_researched(self, name):
-        proj = self.data["projects"].get(name)
-        if proj is None:
-            return
-        proj["Researched"] = not proj.get("Researched", False)
-        save_data(self.data)
-        self._refresh_projects()
-
-    def _commit_projects(self, grid):
-        pass  # projects edited directly in JSON / future editor
-    
-
-    # ── table refresh ─────────────────────────────────────────────────────────
-    def _refresh_table(self):
-        results = analyze_all(self.data,
-                              smelters=max(1, self._smelters.get()),
-                              crafters=max(1, self._crafters.get()))
-        flt     = self._filter_var.get()
-        sort_k  = self._sort_var.get()
-
-        # only show recipes whose output item is marked unlocked
-        results = [r for r in results if r.get("unlocked", True)]
-
-        if flt == "Alloys":
-            results = [r for r in results if r["category"] == "alloys"]
-        elif flt == "Items":
-            results = [r for r in results if r["category"] == "items"]
-
-        results.sort(key=lambda r: r.get(sort_k, 0), reverse=True)
-
-        for row in self.tree.get_children():
-            self.tree.delete(row)
-
-        time_cols  = {"craft_time", "smelt_raw", "craft_raw", "total_time"}
-        money_cols = {"output_value", "direct_cost", "ore_cost",
-                      "profit_direct", "profit_ore",
-                      "vps_output", "vps_profit_direct", "vps_profit_ore"}
-
-        for i, r in enumerate(results):
-            values = []
-            for _, key, _, _ in COL_DEFS:
-                v = r.get(key, "")
-                if key == "category":
-                    values.append("Alloy" if v == "alloys" else "Item")
-                elif key in money_cols:
-                    values.append(fmt(v))
-                elif key in time_cols:
-                    values.append(f"{int(v)}s")
-                else:
-                    values.append(v)
-
-            tags = ["row_a" if i % 2 == 0 else "row_b"]
-            if r["category"] == "alloys":
-                tags.append("alloy")
-            else:
-                tags.append("item")
-            if r.get("profit_ore", 0) < 0:
-                tags.append("bad")
-
-            self.tree.insert("", "end", values=values, tags=tags)
-
-    def _sort_by(self, key: str):
-        self._sort_var.set(key)
-        self._prefs["sort"]["dashboard_sort"] = key
-        save_prefs(self._prefs)
-        self._refresh_table()
-
-
-
-    # ── tab: planets ──────────────────────────────────────────────────────────
-    def _tab_planets(self, nb):
-        frame = ttk.Frame(nb, style="Dark.TFrame", padding=8)
-        nb.add(frame, text="🪐  Planets")
-
-        # ── toolbar ───────────────────────────────────────────────────────────
-        tb = ttk.Frame(frame, style="Dark.TFrame")
-        tb.pack(fill="x", pady=(0, 6))
-        ttk.Label(tb, text="Click Owned to toggle  ·  Click −/+ on level cells to adjust  ·  Double-click bonuses to edit",
-                  style="Muted.TLabel").pack(side="left", padx=4)
-        self._make_bonus_widget(tb, "mining", "Mining Rate", global_mining_bonus)
-        self._make_bonus_widget(tb, "speed",  "Ship Speed",  global_speed_bonus)
-        self._make_bonus_widget(tb, "cargo",  "Ship Cargo",  global_cargo_bonus)
-
-        # ── treeview ──────────────────────────────────────────────────────────
-        pf = ttk.Frame(frame, style="Dark.TFrame")
-        pf.pack(fill="both", expand=True)
-
-        pcols = ("num", "name", "telescope", "unlocked", "ores",
-                 "mlvl", "mining", "slvl", "speed", "clvl", "cargo",
-                 "probe_sep", "probe_m", "probe_s", "probe_c",
-                 "colony_sep", "colony_m", "colony_s", "colony_c")
-        self._planet_tree = ttk.Treeview(pf, columns=pcols,
-                                         show="headings", selectmode="browse")
-
-        _plw = self._prefs["col_widths"]["planets"]
-        col_defs = [
-            ("num",       "#",        40, "center"),
-            ("name",      "Planet",  120, "w"),
-            ("telescope", "Scope",    62, "center"),
-            ("unlocked",  "Owned",    72, "center"),
-            ("ores",      "Ores",    220, "w"),
-            ("mlvl",      "M.Lvl",    81, "center"),
-            ("mining",    "Mining/s", 85, "e"),
-            ("slvl",      "S.Lvl",    81, "center"),
-            ("speed",     "Speed",    70, "e"),
-            ("clvl",      "C.Lvl",    81, "center"),
-            ("cargo",     "Cargo",    60, "e"),
-            ("probe_sep", "Probes:",   83, "center"),
-            ("probe_m",   "Mng",      50, "center"),
-            ("probe_s",   "Spd",      50, "center"),
-            ("probe_c",   "Crg",      50, "center"),
-            ("colony_sep","Colony:",   83, "center"),
-            ("colony_m",  "Mng",      50, "center"),
-            ("colony_s",  "Spd",      50, "center"),
-            ("colony_c",  "Crg",      50, "center"),
-        ]
-        for cid, label, width, anchor in col_defs:
-            self._planet_tree.heading(cid, text=label)
-            self._planet_tree.column(cid, width=_plw.get(cid, width),
-                                     anchor=anchor, stretch=False)
-        # Separator columns are narrow and not resizable
-        for sep in ("probe_sep", "colony_sep"):
-            self._planet_tree.column(sep, minwidth=12, stretch=False)
-
-        vsb = ttk.Scrollbar(pf, orient="vertical",   command=self._planet_tree.yview)
-        hsb = ttk.Scrollbar(pf, orient="horizontal", command=self._planet_tree.xview)
-        self._planet_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        self._planet_tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        pf.rowconfigure(0, weight=1)
-        pf.columnconfigure(0, weight=1)
-
-        self._planet_tree.tag_configure("row_a",    background=ROW_A)
-        self._planet_tree.tag_configure("row_b",    background=ROW_B)
-        self._planet_tree.tag_configure("locked",   foreground="#555570")
-        self._planet_tree.tag_configure("owned",    foreground=TEXT)
-        # Separator cols carry the group label in their heading text only
-        # (per-column heading background isn't supported by ttk.Treeview)
-
-        # double-click to edit; single-click col 4 to toggle owned; save col widths on release
-        self._planet_tree.bind("<Double-1>",        self._planet_tree_edit)
-        self._planet_tree.bind("<ButtonRelease-1>", self._on_planet_tree_click_and_resize)
-
+    def _cb_planet_global(self, s, v, ud):
+        key = ud
+        try: val = max(0.01, float(v))
+        except: return
+        self.state["globals"][key] = val
+        fn_map = {"mining":global_mining_bonus,"speed":global_speed_bonus,"cargo":global_cargo_bonus}
+        tc_map = {"mining":"gmc","speed":"gsc","cargo":"gcc"}
+        tm_map = {"mining":"gmm","speed":"gsm","cargo":"gcm"}
+        dpg.set_value(tc_map[key], f"×{fn_map[key](self.state):.3f}")
+        dpg.set_value(tm_map[key], str(val))
+        save_state(self.state)
         self._refresh_planets()
 
-    def _sync_ore_unlocks(self):
-        """Update ores[x]["unlocked"] and Ore/s from planet ownership."""
-        for ore_name, ore_entry in self.data["ores"].items():
-            ore_entry["unlocked"] = ore_unlocked_from_planets(ore_name, self.data)
-        if hasattr(self, "_ore_grid"):
-            for row in self._ore_grid._data:
-                name = str(row[1]).strip()
-                if name in self.data["ores"]:
-                    row[0] = str(self.data["ores"][name]["unlocked"])
-                    ors = ore_mining_rate(name, self.data)
-                    row[6] = f"{ors:.4f}" if ors else "—"
-            self._ore_grid._redraw()
+    def _cb_planet_owned(self, s, v, ud):
+        pid = ud
+        self.state["planets"][pid]["owned"] = v
+        if v:
+            lvls = self.state["planets"][pid]["levels"]
+            for k in lvls:
+                if lvls[k] == 0: lvls[k] = 1
+        save_state(self.state)
+        self._refresh_planets()
+        self._refresh_ores()
+        self._refresh_dashboard()
+
+    def _cb_planet_lvl(self, s, v, ud):
+        pid, stat, delta = ud
+        cur = self.state["planets"][pid]["levels"][stat]
+        self.state["planets"][pid]["levels"][stat] = max(1, cur+delta)
+        save_state(self.state)
+        self._refresh_planets()
+        self._refresh_dashboard()
+
+    def _cb_planet_bonus_val(self, s, v, ud):
+        pid, group, idx = ud
+        try: val = float(v)
+        except: return
+        self.state["planets"][pid][group][idx] = val
+        save_state(self.state)
+        self._refresh_planets()
+        self._refresh_dashboard()
 
     def _refresh_planets(self):
-        self._sync_ore_unlocks()
-        tree = self._planet_tree
-        for item in tree.get_children():
-            tree.delete(item)
+        dpg.delete_item("planet_tbl", children_only=True, slot=1)
+        gm=global_mining_bonus(self.state); gs=global_speed_bonus(self.state); gc=global_cargo_bonus(self.state)
+        # update bonus comp labels
+        for tc, fn, key in [("gmc",global_mining_bonus,"mining"),
+                             ("gsc",global_speed_bonus,"speed"),
+                             ("gcc",global_cargo_bonus,"cargo")]:
+            dpg.set_value(tc, f"×{fn(self.state):.3f}")
 
-        planets = self.data.get("planets", {})
-        rows = sorted(planets.items(), key=lambda item: item[0])  # always by number
+        # ── header row 1: group span labels ──────────────────────────────────
+        with dpg.table_row(parent="planet_tbl"):
+            # columns 0-10: plain labels, no group heading
+            for lbl in ["","","","","","","","","","",""]:
+                dpg.add_text(lbl, color=C_ACCENT)
+            # columns 11-13: "Probes" spanning — place in col 11, overflow right
 
-        for i, (num, p) in enumerate(rows):
-            owned   = p.get("unlocked", p.get("Telescope", 99) == 0)
-            mlvl    = p["Levels"]["Mining"]
-            slvl    = p["Levels"]["Speed"]
-            clvl    = p["Levels"]["Cargo"]
-            probe   = p.get("probes",  [1, 1, 1])
-            colony  = p.get("colony",  [1, 1, 1])
-            mb      = probe[0] * colony[0] * global_mining_bonus(self.data)
-            sb      = probe[1] * colony[1] * global_speed_bonus(self.data)
-            cb      = probe[2] * colony[2] * global_cargo_bonus(self.data)
-            mrate   = mining_rate(mlvl, mb)
-            speed   = ship_speed(slvl, sb)
-            cargo   = ship_cargo(clvl, cb)
+            dpg.add_text("<----", color=C_TEAL)
+            dpg.add_text("Probes", color=C_TEAL)
+            dpg.add_text("---->", color=C_TEAL)  
+            dpg.add_text() #Divider
+            # columns 14-16: "Colony" spanning
+            dpg.add_text("<----", color=C_TEAL)
+            dpg.add_text("Colony", color=C_TEAL)
+            dpg.add_text("---->", color=C_TEAL) 
+            dpg.add_text() #Divider
 
-            ores_str = ",  ".join(
-                f"{ore} {pct}%" for ore, pct in p["Resources"].items()
-            )
-            scope_str = str(p.get("Telescope", 0)) if p.get("Telescope", 0) else "—"
+        # ── header row 2: sub-column labels ──────────────────────────────────
+        with dpg.table_row(parent="planet_tbl"):
+            # columns 0-10: plain labels, no group heading
+            for lbl in ["#","Planet","Scope"," ","Ores",
+                         "M.Lvl","Ore/s","S.Lvl","Speed","C.Lvl","Cargo"]:
+                dpg.add_text(lbl, color=C_ACCENT)
+            for lbl in ["Mng","Spd","Crg","","Mng","Spd","Crg",""]:
+                dpg.add_text(lbl, color=C_MUTED)
 
-            tag = "row_a" if i % 2 == 0 else "row_b"
-            tag2 = "owned" if owned else "locked"
+        for pid, bd in sorted(self.base["planets"].items(), key=lambda x:int(x[0])):
+            ps    = self.state["planets"][pid]
+            owned = ps["owned"]; lvls = ps["levels"]
+            probe = ps["probes"]; colony = ps["colony"]
+            mb = probe[0]*colony[0]*gm; sb = probe[1]*colony[1]*gs; cb = probe[2]*colony[2]*gc
+            mr = _mining_rate(lvls["mining"],mb) if owned else 0
+            sp = _ship_speed( lvls["speed"], sb) if owned else 0
+            cg = _ship_cargo( lvls["cargo"], cb) if owned else 0
+            scope = str(bd["telescope"]) if bd["telescope"] else "—"
+            ores  = ", ".join(f"{o} {p}%" for o,p in bd["resources"].items())
+            col   = C_TEXT if owned else (85,85,112,255)
 
-            # Level cells show "− N +" for owned planets, "—" otherwise
-            def lvl_str(lvl): return f"− {lvl} +" if owned else "—"
+            def lvl_grp(stat):
+                with dpg.group(horizontal=True):
+                    if owned:
+                        dpg.add_button(label="-",width=16,user_data=(pid,stat,-1),callback=self._cb_planet_lvl)
+                        t2 = dpg.add_input_text(default_value=str(lvls[stat]), readonly=True, width=34)
+                        dpg.add_button(label="+",width=16,user_data=(pid,stat,1), callback=self._cb_planet_lvl)
+                    else:
+                        dpg.add_text("—", color=C_MUTED)
 
-            tree.insert("", "end", iid=str(num), tags=(tag, tag2),
-                        values=(
-                            num, p["Name"], scope_str,
-                            "✓" if owned else "·",
-                            ores_str,
-                            lvl_str(mlvl), f"{mrate:.3f}" if owned else "—",
-                            lvl_str(slvl), f"{speed:.2f}" if owned else "—",
-                            lvl_str(clvl), cargo if owned else "—",
-                            "▌", probe[0], probe[1], probe[2],
-                            "▌", colony[0], colony[1], colony[2],
-                        ))
+            with dpg.table_row(parent="planet_tbl"):
+                dpg.add_text(pid, color=col)
+                dpg.add_text(bd["name"], color=col)
+                dpg.add_text(scope, color=C_MUTED)
+                dpg.add_checkbox(default_value=owned, user_data=pid,
+                                 callback=self._cb_planet_owned)
+                dpg.add_text(ores, color=col)
+                lvl_grp("mining")
+                dpg.add_text(f"{mr:.3f}" if owned else "—", color=col)
+                lvl_grp("speed")
+                dpg.add_text(f"{sp:.2f}" if owned else "—", color=col)
+                lvl_grp("cargo")
+                dpg.add_text(str(cg) if owned else "—", color=col)
+                # Probe bonuses (cols 11-13)
+                for idx in range(3):
+                    dpg.add_input_text(default_value=str(probe[idx]),width=52,
+                                       on_enter=True,
+                                       user_data=(pid,"probes",idx),
+                                       callback=self._cb_planet_bonus_val)
+                dpg.add_text()
+                # Colony bonuses (cols 14-16)
+                for idx in range(3):
+                    dpg.add_input_text(default_value=str(colony[idx]),width=52,
+                                       on_enter=True,
+                                       user_data=(pid,"colony",idx),
+                                       callback=self._cb_planet_bonus_val)
 
-    def _planet_tree_click(self, event):
-        """Toggle owned (col 4) or nudge level via −/+ click (cols 6,8,10)."""
-        tree = self._planet_tree
-        col  = tree.identify_column(event.x)
-        item = tree.identify_row(event.y)
-        if not item:
-            return
-        num    = int(item)
-        planet = self.data["planets"].get(num)
-        if planet is None:
-            return
 
-        if col == "#4":  # Owned toggle
-            was_owned = planet.get("unlocked", False)
-            planet["unlocked"] = not was_owned
-            if not was_owned:  # just turned on → set levels to 1
-                planet["Levels"] = {"Mining": 1, "Speed": 1, "Cargo": 1}
-            save_data(self.data)
-            self._refresh_planets()
-            self._refresh_table()
-            return
-
-        # Level +/- columns: #6=mlvl, #8=slvl, #10=clvl
-        level_cols = {"#6": "Mining", "#8": "Speed", "#10": "Cargo"}
-        if col not in level_cols or not planet.get("unlocked", False):
-            return
-        key   = level_cols[col]
-        bbox  = tree.bbox(item, col)
-        if not bbox:
-            return
-        # Determine if click was in left third (−) or right third (+)
-        cell_x = event.x - bbox[0]
-        cell_w = bbox[2]
-        cur    = planet["Levels"][key]
-        if cell_x < cell_w // 3:
-            planet["Levels"][key] = max(1, cur - 1)
-        elif cell_x > cell_w * 2 // 3:
-            planet["Levels"][key] = cur + 1
+    def _market_widget(self, img_tag: str, mkt: int, user_data: tuple):
+        """Render  −  [chevron image]  +  for a market cell."""
+        dpg.add_button(label="-", width=20,
+                       user_data=(user_data, -1), callback=self._cb_market_adj)
+        tex = self._chev_tex.get(mkt)
+        cw, ch = self._chev_size
+        if tex is not None:
+            dpg.add_image(tex, tag=img_tag, width=cw, height=ch)
         else:
-            return  # click in middle — do nothing
-        save_data(self.data)
-        self._refresh_planets()
-        self._refresh_table()
+            dpg.add_text(str(mkt), tag=img_tag)
+        dpg.add_button(label="+", width=20,
+                       user_data=(user_data, +1), callback=self._cb_market_adj)
 
-    def _planet_tree_edit(self, event):
-        """Double-click to edit level or bonus columns inline."""
-        tree  = self._planet_tree
-        col   = tree.identify_column(event.x)
-        item  = tree.identify_row(event.y)
-        if not item:
-            return
-
-        # Map treeview column id (#N) to our column names
-        col_names = ["num", "name", "telescope", "unlocked", "ores",
-                     "mlvl", "mining", "slvl", "speed", "clvl", "cargo",
-                     "probe_sep", "probe_m", "probe_s", "probe_c",
-                     "colony_sep", "colony_m", "colony_s", "colony_c"]
-        try:
-            col_idx = int(col[1:]) - 1
-            col_name = col_names[col_idx]
-        except (ValueError, IndexError):
-            return
-
-        editable = {
-            "mlvl":      ("Levels", "Mining"),
-            "slvl":      ("Levels", "Speed"),
-            "clvl":      ("Levels", "Cargo"),
-            "probe_sep": None,
-            "probe_m":   ("probes",  0),
-            "probe_s":   ("probes",  1),
-            "probe_c":   ("probes",  2),
-            "colony_sep": None,
-            "colony_m":  ("colony",  0),
-            "colony_s":  ("colony",  1),
-            "colony_c":  ("colony",  2),
-        }
-        if col_name not in editable or editable.get(col_name) is None:
-            return
-
-        num = int(item)
-        planet = self.data["planets"].get(num)
-        if planet is None:
-            return
-
-        path = editable[col_name]
-        if path[0] == "Levels":
-            cur = planet["Levels"][path[1]]
+    def _star_widget(self, tag: str, stars: int):
+        """Draw star image (if available) + count text. Returns text item tag."""
+        if stars > 0:
+            dpg.add_image(self._star_tex,
+                          width=self._star_size[0], height=self._star_size[1])
+            dpg.add_input_text(default_value=str(stars), width=30, tag=tag)
         else:
-            cur = planet[path[0]][path[1]]
+            dpg.add_text("", tag=tag)
+    # ── shared callbacks ───────────────────────────────────────────────────────
+    def _cb_stars(self, s, v, ud):
+        cat, name, _ = ud
+        self.state[cat][name]["stars"] = self.state[cat][name].get("stars",0) + 1
+        save_state(self.state)
+        self._update_price_label(cat, name)
+        self._refresh_dashboard()
 
-        # popup entry
-        bbox = tree.bbox(item, col)
-        if not bbox:
-            return
-        x, y, w, h = bbox
-        var = tk.StringVar(value=str(cur))
-        ent = tk.Entry(tree, textvariable=var, bg=ENTRY_BG, fg=TEXT,
-                       insertbackground=TEXT, relief="flat",
-                       font=REG_FONT, width=6)
-        ent.place(x=x, y=y, width=w, height=h)
-        ent.focus_set()
-        ent.select_range(0, "end")
+    def _cb_market(self, s, v, ud):
+        cat, name, _ = ud
+        self.state[cat][name]["market"] = int(v)
+        save_state(self.state)
+        self._update_price_label(cat, name)
+        self._refresh_dashboard()
 
-        def commit(e=None):
-            try:
-                val = float(var.get())
-                if path[0] == "Levels":
-                    planet["Levels"][path[1]] = int(val)
-                else:
-                    planet[path[0]][path[1]] = val
-            except ValueError:
-                pass
-            ent.destroy()
-            save_data(self.data)
-            self._refresh_planets()
-            self._refresh_table()  # ore rates affect dashboard
+    def _cb_market_adj(self, s, v, ud):
+        """Called by − / + buttons around the chevron image."""
+        (cat, name, _), delta = ud
+        cur = self.state[cat][name].get("market", 0)
+        new_mkt = max(-2, min(4, cur + delta))
+        self.state[cat][name]["market"] = new_mkt
+        save_state(self.state)
+        # Swap the chevron texture in-place
+        img_tag = f"mkt_{cat[:2]}_{name}"
+        new_tex = self._chev_tex.get(new_mkt)
+        if new_tex is not None and dpg.does_item_exist(img_tag):
+            dpg.configure_item(img_tag, texture_tag=new_tex)
+        elif dpg.does_item_exist(img_tag):
+            dpg.set_value(img_tag, str(new_mkt))
+        self._update_price_label(cat, name)
+        self._refresh_dashboard()
 
-        ent.bind("<Return>",   commit)
-        ent.bind("<FocusOut>", commit)
-        ent.bind("<Escape>",   lambda e: ent.destroy())
+    def _cb_unlocked(self, s, v, ud):
+        cat, name, _ = ud
+        self.state[cat][name]["unlocked"] = v
+        save_state(self.state)
+        self._refresh_dashboard()
 
-    # ── preferences ───────────────────────────────────────────────────────────
-    def _save_pref(self, section: str, key: str, value):
-        self._prefs[section][key] = value
-        save_prefs(self._prefs)
+    def _update_price_label(self, cat, name):
+        st    = self.state[cat][name]
+        bp    = self.base[cat][name]["base_price"]
+        stars = st.get("stars",0); mkt = st.get("market",0)
+        rp    = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
+        prefix_map = {"ores":"or","alloys":"al","items":"it"}
+        pre = prefix_map[cat]
+        if dpg.does_item_exist(f"{pre}p_{name}"):
+            dpg.set_value(f"{pre}p_{name}", fmt(rp))
+        star_tag = {"ores":f"ost_{name}","alloys":f"ast_{name}","items":f"ist_{name}"}[cat]
+        if dpg.does_item_exist(star_tag):
+            dpg.set_value(star_tag, str(stars) if stars > 0 else "")
+        if cat=="ores" and dpg.does_item_exist(f"ors_{name}"):
+            ors = ore_mining_rate(name, self.base, self.state)
+            dpg.set_value(f"ors_{name}", f"{ors:.4f}" if ors else "—")
 
-    def _on_tree_resize(self, tree, tree_name: str):
-        """Snapshot current column widths and persist."""
-        widths = {col: tree.column(col, "width") for col in tree["columns"]}
-        self._prefs["col_widths"][tree_name] = widths
-        save_prefs(self._prefs)
+    # ── top-level actions ──────────────────────────────────────────────────────
+    def _cb_save(self):
+        save_state(self.state); save_prefs(self.prefs)
 
-    # Named handlers — avoid lambda/closure issues with tkinter event dispatch
-    def _on_dashboard_filter_change(self):
-        self._prefs["sort"]["dashboard_filter"] = self._filter_var.get()
-        save_prefs(self._prefs)
-        self._refresh_table()
+    def _cb_reset(self):
+        def _go(s, v, u):
+            dpg.delete_item("reset_dlg")
+            if not v: return
+            self.state = default_state(self.base)
+            save_state(self.state)
+            self._refresh_all()
+        with dpg.window(label="Reset?", modal=True, tag="reset_dlg",
+                        width=340, height=110, pos=(540,360)):
+            dpg.add_text("Reset ALL data to defaults? Cannot be undone.")
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Yes – Reset", user_data=True,  callback=_go)
+                dpg.add_button(label="Cancel",       user_data=False, callback=_go)
 
-    def _on_dashboard_sort_change(self, _event=None):
-        self._prefs["sort"]["dashboard_sort"] = self._sort_var.get()
-        save_prefs(self._prefs)
-        self._refresh_table()
+    def _cb_sell_galaxy(self):
+        def _go(s, v, u):
+            dpg.delete_item("sell_dlg")
+            if not v: return
+            old_stars = {cat:{n:self.state[cat][n].get("stars",0) for n in self.state[cat]}
+                         for cat in ("ores","alloys","items")}
+            self.state = default_state(self.base)
+            for cat in ("ores","alloys","items"):
+                for n in self.state[cat]:
+                    self.state[cat][n]["stars"] = old_stars[cat].get(n,0)
+            save_state(self.state)
+            self._refresh_all()
+        with dpg.window(label="Sell Galaxy?", modal=True, tag="sell_dlg",
+                        width=360, height=130, pos=(540,360)):
+            dpg.add_text("Start a new galaxy?\n• Stars are kept\n• Everything else resets.")
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Yes – Sell Galaxy", user_data=True,  callback=_go)
+                dpg.add_button(label="Cancel",             user_data=False, callback=_go)
 
-    def _on_dashboard_resize(self, _event=None):
-        self._on_tree_resize(self.tree, "dashboard")
-
-    def _on_proj_sort_change(self):
-        self._prefs["sort"]["projects_sort"] = self._proj_sort_var.get()
-        save_prefs(self._prefs)
+    def _refresh_all(self):
+        self._refresh_ores()
+        self._refresh_alloys()
+        self._refresh_items()
         self._refresh_projects()
-
-    def _on_proj_tree_click_and_resize(self, event):
-        self._proj_tree_click(event)
-        self._on_tree_resize(self._proj_tree, "projects")
-
-    def _on_planet_tree_click_and_resize(self, event):
-        self._planet_tree_click(event)
-        self._on_tree_resize(self._planet_tree, "planets")
-
-    # ── save / reset ──────────────────────────────────────────────────────────
-    def _save(self):
-        save_data(self.data)
-        messagebox.showinfo("Saved", f"Data saved to:\n{DATA_FILE}")
-
-    def _reset_defaults(self):
-        if messagebox.askyesno("Reset", "Reset all data to defaults? This cannot be undone."):
-            self.data = json.loads(json.dumps(DEFAULT_DATA))
-            save_data(self.data)
-            messagebox.showinfo("Reset", "Data reset. Please restart the app for full UI refresh.")
-
-    def _sell_galaxy(self):
-        """New galaxy: keep stars, reset market/unlocks/research."""
-        if not messagebox.askyesno(
-                "Sell Galaxy",
-                "Start a new galaxy?\n\n"
-                "• Stars are kept\n"
-                "• Unlocks, market levels and project research are reset"):
-            return
-        for cat in ("ores", "alloys", "items"):
-            for entry in self.data[cat].values():
-                entry["unlocked"] = False
-                entry["market"]   = 0
-                entry["realPrice"] = getRealPrice(
-                    entry["base_price"], entry.get("stars", 0), 0, cat)
-                # stars intentionally NOT reset
-        for proj in self.data["projects"].values():
-            proj["Researched"] = False
-        self._smelters.set(1)
-        self._crafters.set(1)
-        for planet in self.data["planets"].values():
-            was_default = (planet.get("Telescope", 99) == 0)
-            planet["unlocked"] = was_default
-            # Default planets start at level 1, locked planets reset to 0
-            planet["Levels"]   = {"Mining": 1 if was_default else 0,
-                                  "Speed":  1 if was_default else 0,
-                                  "Cargo":  1 if was_default else 0}
-            planet["probes"]   = [1, 1, 1]
-            planet["colony"]   = [1, 1, 1]
-        save_data(self.data)
-        messagebox.showinfo("Sell Galaxy",
-                            "Galaxy sold!\nRestart the app to refresh all grids.")
+        self._refresh_planets()
+        self._refresh_dashboard()
+        dpg.set_value("lbl_smelters", str(self.state.get("smelters",1)))
+        dpg.set_value("lbl_crafters", str(self.state.get("crafters",1)))
+        dpg.set_value("dash_filter",  self.prefs.get("dashboard_filter","All"))
+        dpg.set_value("dash_sort",    self.prefs.get("dashboard_sort","vps_profit_ore"))
+        dpg.set_value("proj_sort",    self.prefs.get("projects_sort","time"))
 
 
-# ── entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    App()
