@@ -10,6 +10,7 @@ Files (all in same folder as this script):
 
 import json, os, re, copy
 import dearpygui.dearpygui as dpg
+from PIL import Image
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,9 +55,6 @@ def fmt_time(s: float) -> str:
     if h < 24:   return f"{h}h{m:02d}m"
     d, h = divmod(h, 24)
     return f"{d}d{h:02d}h"
-
-def fmt_stars(n: int) -> str:
-    return f"★{n}" if n > 0 else ""
 
 # ── base data ──────────────────────────────────────────────────────────────────
 def load_base() -> dict:
@@ -338,10 +336,7 @@ class App:
         self._chev_size = (40, 57)  # will be updated from actual image
         self._load_chevrons()
         star_path = os.path.join(SCRIPT_DIR, "Images/star.png")
-        if not os.path.exists(star_path):
-            self._gen_star_png(star_path)
         try:
-            from PIL import Image
             img  = Image.open(star_path).convert("RGBA")
             w, h = img.size
             flat = [c / 255.0 for px in img.getdata() for c in px]
@@ -349,11 +344,22 @@ class App:
                 self._star_tex = dpg.add_static_texture(
                     width=w, height=h, default_value=flat)
             self._star_size = (w, h)
-        #except Exception as e:
-        #    print(f"[warn] Could not load star.png: {e}")
-        finally:
-            pass
-            
+        except Exception as e:
+            print(f"[warn] Could not load star.png: {e}")
+        self._no_star_tex = None
+        no_star_path = os.path.join(SCRIPT_DIR, "Images/noStar.png")
+        try:
+            img  = Image.open(no_star_path).convert("RGBA")
+            w, h = img.size
+            flat = [c / 255.0 for px in img.getdata() for c in px]
+            with dpg.texture_registry():
+                self._no_star_tex = dpg.add_static_texture(
+                    width=w, height=h, default_value=flat)
+            self._no_star_size = (w, h)
+        except Exception as e:
+            print(f"[warn] Could not load noStar.png: {e}")
+        
+           
 
     def _load_chevrons(self):
         """Load Chev-2.png .. Chev4.png as DPG static textures."""
@@ -664,10 +670,12 @@ class App:
                 dpg.add_text(ore)
                 dpg.add_text(fmt(bp), color=C_MUTED)
                 with dpg.group(horizontal=True):
-                    self._star_widget(f"ost_{ore}", stars)
+                    self._star_widget(f"ost_{ore}", 
+                                stars=stars,
+                                ud=("ores", ore, "stars"))
                     dpg.add_button(label="+", width=22,
-                                   user_data=("ores",ore,"stars"),
-                                   callback=self._cb_stars)
+                                user_data=(("ores",ore,"stars"),1),
+                                callback=self._cb_stars)
                 with dpg.group(horizontal=True):
                     self._market_widget(f"mkt_or_{ore}", mkt, ("ores",ore,"market"))
                 dpg.add_text(fmt(rp), tag=f"orp_{ore}", color=C_TEAL)
@@ -716,10 +724,12 @@ class App:
                 dpg.add_text(fmt(bp), color=C_MUTED)
                 dpg.add_text(fmt_time(at), color=C_MUTED)
                 with dpg.group(horizontal=True):
-                    self._star_widget(f"ast_{name}", stars)
+                    self._star_widget(f"ast_{name}", 
+                                ud=("alloys",name,"stars"),
+                                stars=stars)
                     dpg.add_button(label="+", width=22,
-                                   user_data=("alloys",name,"stars"),
-                                   callback=self._cb_stars)
+                                user_data=(("alloys",name,"stars"),1),
+                                callback=self._cb_stars)
                 with dpg.group(horizontal=True):
                     self._market_widget(f"mkt_al_{name}", mkt, ("alloys",name,"market"))
                 dpg.add_text(fmt(rp), tag=f"alp_{name}", color=C_TEAL)
@@ -767,10 +777,12 @@ class App:
                 dpg.add_text(fmt(bp), color=C_MUTED)
                 dpg.add_text(fmt_time(at), color=C_MUTED)
                 with dpg.group(horizontal=True):
-                    self._star_widget(f"ist_{name}", stars)
+                    self._star_widget(f"ist_{name}", 
+                                ud=("items",name,"stars"),
+                                stars=stars)
                     dpg.add_button(label="+", width=22,
-                                   user_data=("items",name,"stars"),
-                                   callback=self._cb_stars)
+                                user_data=(("items",name,"stars"),1),
+                                callback=self._cb_stars)
                 with dpg.group(horizontal=True):
                     self._market_widget(f"mkt_it_{name}", mkt, ("items",name,"market"))
                 dpg.add_text(fmt(rp), tag=f"itp_{name}", color=C_TEAL)
@@ -965,7 +977,7 @@ class App:
                 with dpg.group(horizontal=True):
                     if owned:
                         dpg.add_button(label="-",width=16,user_data=(pid,stat,-1),callback=self._cb_planet_lvl)
-                        t2 = dpg.add_input_text(default_value=str(lvls[stat]), readonly=True, width=34)
+                        dpg.add_input_text(default_value=str(lvls[stat]), readonly=True, width=34)
                         dpg.add_button(label="+",width=16,user_data=(pid,stat,1), callback=self._cb_planet_lvl)
                     else:
                         dpg.add_text("—", color=C_MUTED)
@@ -1011,19 +1023,53 @@ class App:
         dpg.add_button(label="+", width=20,
                        user_data=(user_data, +1), callback=self._cb_market_adj)
 
-    def _star_widget(self, tag: str, stars: int):
+    def _star_widget(self, tag: str, stars: int, ud: tuple):
         """Draw star image (if available) + count text. Returns text item tag."""
+        img_tag = f"{tag}_img"
         if stars > 0:
             dpg.add_image(self._star_tex,
-                          width=self._star_size[0], height=self._star_size[1])
-            dpg.add_input_text(default_value=str(stars), width=30, tag=tag)
+                        width=self._star_size[0],
+                        height=self._star_size[1],
+                        tag=img_tag
+                        )
+            dpg.add_input_text(default_value=str(stars), 
+                        width=30,
+                        user_data=(ud,0),
+                        callback=self._cb_stars,
+                        on_enter=True,
+                        tag=tag)
         else:
-            dpg.add_text("", tag=tag)
+            dpg.add_image(self._no_star_tex,
+                        width=self._star_size[0],
+                        height=self._star_size[1],
+                        tag=img_tag)
+            dpg.add_input_text(default_value="",
+                        width=30,
+                        user_data=(ud,0),
+                        callback=self._cb_stars,
+                        on_enter=True,
+                        tag=tag)
     # ── shared callbacks ───────────────────────────────────────────────────────
     def _cb_stars(self, s, v, ud):
-        cat, name, _ = ud
-        self.state[cat][name]["stars"] = self.state[cat][name].get("stars",0) + 1
+        (cat, name, _), delta = ud
+        if delta == 0:
+            self.state[cat][name]["stars"] = int(v)
+        else:
+            self.state[cat][name]["stars"] = self.state[cat][name].get("stars",0) + delta
+        if self.state[cat][name]["stars"] < 0:
+            self.state[cat][name]["stars"] = 0
         save_state(self.state)
+        if cat == 'ores':
+            img_tag = f"ost_{name}_img"
+        elif cat == 'alloys':
+            img_tag = f"ast_{name}_img"
+        else:
+            img_tag = f"ist_{name}_img"
+        
+        new_tex = self._no_star_tex
+        if self.state[cat][name]["stars"] > 0:
+            new_tex = self._star_tex
+        dpg.configure_item(img_tag, texture_tag=new_tex)
         self._update_price_label(cat, name)
         self._refresh_dashboard()
 
