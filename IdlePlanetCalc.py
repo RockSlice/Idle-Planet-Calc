@@ -83,6 +83,7 @@ def default_state(base: dict) -> dict:
                      "smelt_speed":1.0,"craft_speed":1.0},
         "smelters": 1,
         "crafters": 1,
+        "colonies": [],
     }
 
 def _deep_merge(fresh: dict, saved: dict):
@@ -109,7 +110,7 @@ def save_state(state: dict):
 
 # ── prefs ──────────────────────────────────────────────────────────────────────
 _DEF_PREFS = {"dashboard_filter":"All","dashboard_sort":"vps_profit_ore",
-              "projects_sort":"time"}
+              "projects_sort":"time", "colonies_sort":"planet"}
 
 def load_prefs() -> dict:
     if os.path.exists(PREFS_FILE):
@@ -282,6 +283,7 @@ class App:
                 with dpg.tab(label="  Items      "): self._tab_items()
                 with dpg.tab(label="  Projects   "): self._tab_projects()
                 with dpg.tab(label="  Planets    "): self._tab_planets()
+                with dpg.tab(label="  Colonies   "): self._tab_colonies()
 
         dpg.set_viewport_resize_callback(self._resize)
         dpg.create_viewport(title="Idle Planet Miner - Calculator",
@@ -308,13 +310,13 @@ class App:
         if font_path is None:
             return  # use DPG default
         with dpg.font_registry():
-            with dpg.font(font_path, 22) as fnt:
+            with dpg.font(font_path, 22, default_font=True) as fnt:
                 # Add extended unicode ranges needed:
                 # Basic Latin + Latin-1 (always included by default)
                 # General Punctuation: ellipsis, bullets, dashes
                 dpg.add_font_range(0x2000, 0x206F)
                 # Arrows: ↑ ↓ ← →
-                dpg.add_font_range(0x2190, 0x21FF)
+                dpg.add_font_range(0x2100, 0x21FF)
                 # Mathematical operators: × − ÷
                 dpg.add_font_range(0x2200, 0x22FF)
                 # Misc symbols: ★ ☑ ☐ ✓
@@ -358,6 +360,39 @@ class App:
             self._no_star_size = (w, h)
         except Exception as e:
             print(f"[warn] Could not load noStar.png: {e}")
+        self._arrow_right = None
+        arrow_right_path = os.path.join(SCRIPT_DIR, "Images/Arrow_Right.png")
+        try:
+            img  = Image.open(arrow_right_path).convert("RGBA")
+            w, h = img.size
+            flat = [c / 255.0 for px in img.getdata() for c in px]
+            with dpg.texture_registry():
+                self._arrow_right = dpg.add_static_texture(
+                    width=w, height=h, default_value=flat)
+            self._arrow_right_size = (w, h)
+        except Exception as e:
+            print(f"[warn] Could not load Arrow_Right.png: {e}")
+        
+        self._telescope = None
+        telescope_path = os.path.join(SCRIPT_DIR, "Images/Telescope.png")
+        try:
+            img  = Image.open(telescope_path).convert("RGBA")
+            w, h = img.size
+            flat = [c / 255.0 for px in img.getdata() for c in px]
+            with dpg.texture_registry():
+                self._telescope = dpg.add_static_texture(
+                    width=w, height=h, default_value=flat)
+            self._telescope_size = (w, h)
+        except Exception as e:
+            print(f"[warn] Could not load telescope.png: {e}")
+        
+        img = Image.open(os.path.join(SCRIPT_DIR, "Images/Check.png")).convert("RGBA")
+        w,h = img.size
+        flat = [c / 255.0 for px in img.getdata() for c in px]
+        with dpg.texture_registry():
+            self._check = dpg.add_static_texture(
+                width=w, height=h, default_value=flat)
+        self._check_size = (w, h)
         
            
 
@@ -666,7 +701,10 @@ class App:
             unl = ore_unlocked(ore, self.base, self.state)
             ors = ore_mining_rate(ore, self.base, self.state)
             with dpg.table_row(parent="ores_tbl"):
-                dpg.add_text("✓" if unl else "·", color=C_TEAL if unl else C_MUTED)
+                if unl:
+                    dpg.add_image(self._check)
+                else:
+                    dpg.add_text("·", color=C_MUTED)
                 dpg.add_text(ore)
                 dpg.add_text(fmt(bp), color=C_MUTED)
                 with dpg.group(horizontal=True):
@@ -857,6 +895,261 @@ class App:
         self._refresh_projects()
         self._refresh_dashboard()
 
+
+    # ── COLONIES ───────────────────────────────────────────────────────────────
+    # Colony rows are stored in state["colonies"] as a list of dicts:
+    #   {"planet": "2", "recipe": {"Iron": 100, ...}}
+    # planet "" means unassigned.
+
+    _N_INGR = 5   # number of ingredient slots per colony row
+
+    def _col_owned_planet_items(self):
+        """List of "pid: name" strings for owned planets, plus blank."""
+        items = [""]
+        for pid, bd in sorted(self.base["planets"].items(), key=lambda x: int(x[0])):
+            if self.state["planets"][pid]["owned"]:
+                items.append(f"{pid}: {bd['name']}")
+        return items
+
+    def _col_ingredient_items(self):
+        """All unlocked ores + unlocked alloys/items, plus blank."""
+        opts = [""]
+        for ore in self.base["ores"]:
+            if ore_unlocked(ore, self.base, self.state):
+                opts.append(ore)
+        for name in self.base["alloys"]:
+            if self.state["alloys"][name].get("unlocked"):
+                opts.append(name)
+        for name in self.base["items"]:
+            if self.state["items"][name].get("unlocked"):
+                opts.append(name)
+        return opts
+
+    def _col_recipe_cost_time(self, recipe: dict):
+        """Return (cost, wall_time) for a colony recipe dict."""
+        sm = self.state.get("smelters", 1)
+        cr = self.state.get("crafters", 1)
+        cost = sum(effective_price(i, self.base, self.state) * q
+                   for i, q in recipe.items())
+        st2 = 0; ct2 = 0
+        for i, q in recipe.items():
+            c2 = ("alloys" if i in self.base["alloys"]
+                  else "items" if i in self.base["items"] else None)
+            if c2:
+                st2 += total_smelt_time(i, c2, self.base, self.state) * q
+                ct2 += total_craft_time(i, c2, self.base, self.state) * q
+        wt = wall_time(st2, ct2, sm, cr)
+        return cost, wt
+
+    def _tab_colonies(self):
+        # Sort controls + Add row button
+        with dpg.group(horizontal=True):
+            dpg.add_text("Sort:", color=C_MUTED)
+            dpg.add_radio_button(
+                items=["planet", "cost", "time"],
+                default_value=self.prefs.get("colonies_sort", "planet"),
+                horizontal=True, tag="col_sort",
+                callback=lambda s, v: (
+                    self.prefs.update({"colonies_sort": v}),
+                    save_prefs(self.prefs),
+                    self._refresh_colonies()))
+            dpg.add_spacer(width=20)
+            dpg.add_button(label="+ Add Colony", callback=self._cb_col_add_row)
+
+        ing_cols = []
+        for i in range(1, self._N_INGR + 1):
+            ing_cols += [(f"Ingredient {i}", 150), (f"Qty {i}", 60)]
+
+        with dpg.table(
+            tag="col_tbl", header_row=True, row_background=True,
+            borders_innerH=True, borders_outerH=True,
+            borders_innerV=True, borders_outerV=True,
+            scrollY=True, scrollX=True, resizable=True,
+            policy=dpg.mvTable_SizingFixedFit, freeze_rows=1,
+        ):
+            for lbl, w in (
+                [(" ", 81), ("Planet", 150), ("Cost", 110), ("Time", 82)]
+                + ing_cols
+            ):
+                dpg.add_table_column(label=lbl, width_fixed=True,
+                                     init_width_or_weight=w)
+
+    def _refresh_colonies(self):
+        dpg.delete_item("col_tbl", children_only=True, slot=1)
+        colonies = self.state.get("colonies", [])
+        sort = self.prefs.get("colonies_sort", "planet")
+        sm = self.state.get("smelters", 1)
+        cr = self.state.get("crafters", 1)
+
+        def sort_key(item):
+            idx, row = item
+            if sort == "cost":
+                return self._col_recipe_cost_time(row.get("recipe", {}))[0]
+            if sort == "time":
+                return self._col_recipe_cost_time(row.get("recipe", {}))[1]
+            # planet: sort by numeric planet id, unassigned last
+            pid = row.get("planet", "")
+            return (0, int(pid)) if pid else (1, 0)
+
+        planet_items = self._col_owned_planet_items()
+        ing_items    = self._col_ingredient_items()
+
+        for orig_idx, row in sorted(enumerate(colonies), key=sort_key):
+            recipe  = row.get("recipe", {})
+            pid     = row.get("planet", "")
+            cost, wt = self._col_recipe_cost_time(recipe)
+            has_planet = bool(pid)
+            planet_val = f"{pid}: {self.base['planets'][pid]['name']}" if pid else ""
+
+            with dpg.table_row(parent="col_tbl"):
+                # Complete button — disabled if no planet selected
+                dpg.add_button(
+                    label="Complete",
+                    enabled=has_planet,
+                    user_data=orig_idx,
+                    callback=self._cb_col_complete)
+
+                # Planet dropdown
+                dpg.add_combo(
+                    items=planet_items,
+                    default_value=planet_val,
+                    width=145,
+                    user_data=orig_idx,
+                    callback=self._cb_col_planet)
+
+                # Calculated columns
+                dpg.add_text(fmt(cost), color=C_TEAL)
+                dpg.add_text(fmt_time(wt), color=C_MUTED)
+
+                # Ingredient slots
+                recipe_items = list(recipe.items())
+                for slot in range(self._N_INGR):
+                    ing  = recipe_items[slot][0] if slot < len(recipe_items) else ""
+                    qty  = recipe_items[slot][1] if slot < len(recipe_items) else 1
+                    dpg.add_combo(
+                        items=ing_items,
+                        default_value=ing,
+                        width=145,
+                        user_data=(orig_idx, slot, "ing"),
+                        callback=self._cb_col_ingredient)
+                    dpg.add_input_int(
+                        default_value=int(qty) if ing else 1,
+                        width=55, step=0,
+                        min_value=1, min_clamped=True,
+                        on_enter=True,
+                        user_data=(orig_idx, slot, "qty"),
+                        callback=self._cb_col_qty)
+
+    def _cb_col_add_row(self):
+        self.state.setdefault("colonies", []).append({"planet": "", "recipe": {}})
+        save_state(self.state)
+        self._refresh_colonies()
+
+    def _cb_col_planet(self, s, v, ud):
+        orig_idx = ud
+        pid = v.split(":")[0].strip() if v else ""
+        self.state["colonies"][orig_idx]["planet"] = pid
+        save_state(self.state)
+        self._refresh_colonies()
+
+    def _cb_col_ingredient(self, s, v, ud):
+        orig_idx, slot, _ = ud
+        row    = self.state["colonies"][orig_idx]
+        recipe = row.get("recipe", {})
+        items  = list(recipe.items())
+        # Rebuild recipe preserving slot order
+        new_recipe = {}
+        for i in range(self._N_INGR):
+            ing = items[i][0] if i < len(items) else ""
+            qty = items[i][1] if i < len(items) else 1
+            if i == slot:
+                ing = v
+            if ing:
+                new_recipe[ing] = qty
+        row["recipe"] = new_recipe
+        save_state(self.state)
+        self._refresh_colonies()
+
+    def _cb_col_qty(self, s, v, ud):
+        orig_idx, slot, _ = ud
+        row    = self.state["colonies"][orig_idx]
+        recipe = row.get("recipe", {})
+        items  = list(recipe.items())
+        if slot < len(items):
+            ing = items[slot][0]
+            row["recipe"][ing] = max(1, int(v))
+            save_state(self.state)
+            self._refresh_colonies()
+
+    def _cb_col_complete(self, s, v, ud):
+        orig_idx = ud
+        row = self.state["colonies"][orig_idx]
+        pid = row.get("planet", "")
+        if not pid:
+            return
+        planet_name = self.base["planets"][pid]["name"]
+
+        def _apply(sender, val, stat):
+            dpg.delete_item("col_bonus_dlg")
+            if stat is None:
+                return
+            bonuses = {"mining": 0.3, "speed": 0.6, "cargo": 0.6}
+            idx_map  = {"mining": 0,   "speed": 1,   "cargo": 2}
+            inc  = bonuses[stat]
+            idx  = idx_map[stat]
+            cur  = self.state["planets"][pid]["colony"][idx]
+            self.state["planets"][pid]["colony"][idx] = round(cur + inc, 4)
+            # Remove this colony row
+            self.state["colonies"].pop(orig_idx)
+            save_state(self.state)
+            self._refresh_colonies()
+            self._refresh_planets()
+            self._refresh_dashboard()
+
+        vp_w = dpg.get_viewport_client_width()
+        vp_h = dpg.get_viewport_client_height()
+        dlg_w, dlg_h = 320, 210
+        px = (vp_w - dlg_w) // 2
+        py = (vp_h - dlg_h) // 2
+        colony_state = self.state["planets"][pid]["colony"]
+
+        with dpg.window(label=f"Complete Colony – {planet_name}",
+                        modal=True, tag="col_bonus_dlg",
+                        width=dlg_w, height=dlg_h, pos=(px, py)):
+            dpg.add_text("Apply bonus to:")
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Mining Rate",
+                        width=110,
+                        user_data="mining", callback=_apply)
+                dpg.add_text(f"{colony_state[0]}")
+                dpg.add_image(self._arrow_right,
+                        width=self._arrow_right_size[0],
+                        height=self._arrow_right_size[1]
+                        )
+                dpg.add_text(f"{colony_state[0] + 0.3}")
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Ship Speed",
+                            width=110,
+                            user_data="speed",  callback=_apply)
+                dpg.add_text(f"{colony_state[1]}")
+                dpg.add_image(self._arrow_right,
+                        width=self._arrow_right_size[0],
+                        height=self._arrow_right_size[1]
+                        )
+                dpg.add_text(f"{colony_state[1] + 0.6}")
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Ship Cargo",
+                            width=110,
+                            user_data="cargo",  callback=_apply)
+                dpg.add_text(f"{colony_state[2]}")
+                dpg.add_image(self._arrow_right,
+                        width=self._arrow_right_size[0],
+                        height=self._arrow_right_size[1]
+                        )
+                dpg.add_text(f"{colony_state[2] + 0.3}")
+            dpg.add_separator()
+            dpg.add_button(label="Cancel", user_data=None, callback=_apply)
+
     # ── PLANETS ────────────────────────────────────────────────────────────────
     def _tab_planets(self):
         with dpg.group(horizontal=True):
@@ -873,13 +1166,13 @@ class App:
                        policy=dpg.mvTable_SizingFixedFit, freeze_rows=2):
             # 19 columns: 11 main + 3 probe + 3 colony + 2 separator
             for w in [
-                28, 105, 45, 50, 210,   # #, Planet, Scope, Owned, Ores
+                28, 105, 45, 27, 210,   # #, Planet, Scope, Owned, Ores
                 80, 72,                 # M.Lvl, Min/s
                 80, 62,                 # S.Lvl, Spd
                 80, 50,                 # C.Lvl, Crg
-                62, 62, 62,             # Probe: Mng, Spd, Crg
+                50, 50, 50,             # Probe: Mng, Spd, Crg
                 5,
-                62, 62, 62,             # Colony: Mng, Spd, Crg
+                50, 50, 50,             # Colony: Mng, Spd, Crg
                 5,
             ]:
                 dpg.add_table_column(label="", width_fixed=True, init_width_or_weight=w)
@@ -955,7 +1248,10 @@ class App:
         # ── header row 2: sub-column labels ──────────────────────────────────
         with dpg.table_row(parent="planet_tbl"):
             # columns 0-10: plain labels, no group heading
-            for lbl in ["#","Planet","Scope"," ","Ores",
+            for lbl in ["#","Planet"]:
+                dpg.add_text(lbl, color=C_ACCENT)
+            dpg.add_image(self._telescope, width=self._telescope_size[0], height=self._telescope_size[1])
+            for lbl in [" ","Ores",
                          "M.Lvl","Ore/s","S.Lvl","Speed","C.Lvl","Cargo"]:
                 dpg.add_text(lbl, color=C_ACCENT)
             for lbl in ["Mng","Spd","Crg","","Mng","Spd","Crg",""]:
@@ -1161,6 +1457,7 @@ class App:
         self._refresh_alloys()
         self._refresh_items()
         self._refresh_projects()
+        self._refresh_colonies()
         self._refresh_planets()
         self._refresh_dashboard()
         dpg.set_value("lbl_smelters", str(self.state.get("smelters",1)))
