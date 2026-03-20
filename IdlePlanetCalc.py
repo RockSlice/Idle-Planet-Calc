@@ -10,6 +10,7 @@ Files (all in same folder as this script):
 
 import json, os, re, copy
 import dearpygui.dearpygui as dpg
+import copy
 from PIL import Image
 
 # ── paths ─────────────────────────────────────────────────────────────────────
@@ -84,6 +85,8 @@ def default_state(base: dict) -> dict:
         "smelters": 1,
         "crafters": 1,
         "colonies": [],
+        "beacons":  {str(i): {"mining": 1.0, "speed": 1.0, "cargo": 1.0}
+                     for i in range(23)},
     }
 
 def _deep_merge(fresh: dict, saved: dict):
@@ -110,7 +113,8 @@ def save_state(state: dict):
 
 # ── prefs ──────────────────────────────────────────────────────────────────────
 _DEF_PREFS = {"dashboard_filter":"All","dashboard_sort":"vps_profit_ore",
-              "projects_sort":"time", "colonies_sort":"planet"}
+              "projects_sort":"time", "colonies_sort":"planet",
+              "beacons_sort":"level"}
 
 def load_prefs() -> dict:
     if os.path.exists(PREFS_FILE):
@@ -193,6 +197,11 @@ def global_cargo_bonus(state):
 
 def global_smelt_speed(state): return float(state.get("globals",{}).get("smelt_speed",1))
 def global_craft_speed(state): return float(state.get("globals",{}).get("craft_speed",1))
+
+def beacon_bonus(pid: str, stat: str, base: dict, state: dict) -> float:
+    """Return the beacon multiplier for planet pid and stat (mining/speed/cargo)."""
+    scope = str(base["planets"][pid]["telescope"])
+    return float(state.get("beacons", {}).get(scope, {}).get(stat, 1.0))
 
 # ── time helpers ───────────────────────────────────────────────────────────────
 def total_smelt_time(name, cat, base, state):
@@ -284,6 +293,7 @@ class App:
                 with dpg.tab(label="  Projects   "): self._tab_projects()
                 with dpg.tab(label="  Planets    "): self._tab_planets()
                 with dpg.tab(label="  Colonies   "): self._tab_colonies()
+                with dpg.tab(label="  Beacons    "): self._tab_beacons()
 
         dpg.set_viewport_resize_callback(self._resize)
         dpg.create_viewport(title="Idle Planet Miner - Calculator",
@@ -1150,6 +1160,116 @@ class App:
             dpg.add_separator()
             dpg.add_button(label="Cancel", user_data=None, callback=_apply)
 
+
+    # ── BEACONS ────────────────────────────────────────────────────────────────
+    # Beacons are keyed by telescope level (str "0".."22").
+    # Beacon "0" applies to scope-0 planets (1-4), beacon "1" to scope-1 (5-7), etc.
+    # Unlocked once the matching Telescope project is researched (scope 0 always active).
+    # Bonus increments: mining +0.02, speed/cargo +0.04.
+
+    # Map: telescope level -> project name that unlocks it (scope 0 always active)
+    _BEACON_PROJECT = {i: f"Telescope {i}" for i in range(1, 23)}
+
+    def _beacon_unlocked(self, scope: int) -> bool:
+        if scope == 0: return True
+        proj = self._BEACON_PROJECT.get(scope, "")
+        return self.state["projects"].get(proj, {}).get("researched", False)
+
+    def _beacon_planet_range(self, scope: int) -> str:
+        """Return e.g. '1-4' for the planets in this scope group."""
+        import json as _json
+        pids = sorted(
+            int(k) for k, v in self.base["planets"].items()
+            if v["telescope"] == scope)
+        if not pids: return "—"
+        return f"{pids[0]}–{pids[-1]}"
+
+    def _tab_beacons(self):
+        with dpg.table(
+            tag="beacon_tbl", header_row=True, row_background=True,
+            borders_innerH=True, borders_outerH=True,
+            borders_innerV=True, borders_outerV=True,
+            scrollY=True, resizable=True,
+            policy=dpg.mvTable_SizingFixedFit, freeze_rows=1,
+        ):
+            for lbl, w in [
+                ("Scope", 52), ("Planets", 70), ("Unlocked by", 150),
+                ("Mining", 120), ("Speed", 120), ("Cargo", 120),
+            ]:
+                dpg.add_table_column(label=lbl, width_fixed=True,
+                                     init_width_or_weight=w)
+
+    def _refresh_beacons(self):
+        dpg.delete_item("beacon_tbl", children_only=True, slot=1)
+        beacons = self.state.get("beacons", {})
+
+        for scope in range(23):
+            key     = str(scope)
+            vals    = beacons.get(key, {"mining":1.0,"speed":1.0,"cargo":1.0})
+            active  = self._beacon_unlocked(scope)
+            col     = C_TEXT if active else (85, 85, 112, 255)
+            proj    = self._BEACON_PROJECT.get(scope, "—")
+            planets = self._beacon_planet_range(scope)
+
+            with dpg.table_row(parent="beacon_tbl"):
+                dpg.add_text(str(scope), color=col)
+                dpg.add_text(planets,    color=col)
+                dpg.add_text(proj if scope > 0 else "Always active", color=col)
+
+                # Mining bonus widget
+                self._beacon_input(key, "mining", vals["mining"], active,
+                                   inc=0.02, tag=f"bcn_{key}_mining")
+                # Speed bonus widget
+                self._beacon_input(key, "speed",  vals["speed"],  active,
+                                   inc=0.04, tag=f"bcn_{key}_speed")
+                # Cargo bonus widget
+                self._beacon_input(key, "cargo",  vals["cargo"],  active,
+                                   inc=0.04, tag=f"bcn_{key}_cargo")
+
+    def _beacon_input(self, key: str, stat: str, val: float,
+                      active: bool, inc: float, tag: str):
+        """Editable float field + + button for a beacon bonus."""
+        with dpg.group(horizontal=True):
+            dpg.add_input_text(
+                default_value=f"{val:.2f}",
+                width=58, tag=tag,
+                enabled=active,
+                on_enter=True,
+                user_data=(key, stat),
+                callback=self._cb_beacon_edit)
+            dpg.add_button(
+                label="+", width=22,
+                enabled=active,
+                user_data=(key, stat, inc),
+                callback=self._cb_beacon_inc)
+
+    def _cb_beacon_edit(self, s, v, ud):
+        key, stat = ud
+        try:
+            val = max(1.0, round(float(v), 4))
+        except ValueError:
+            return
+        self.state.setdefault("beacons", {}).setdefault(key, {"mining":1.0,"speed":1.0,"cargo":1.0})[stat] = val
+        tag = f"bcn_{key}_{stat}"
+        if dpg.does_item_exist(tag):
+            dpg.set_value(tag, f"{val:.2f}")
+        save_state(self.state)
+        self._refresh_planets()
+        self._refresh_dashboard()
+
+    def _cb_beacon_inc(self, s, v, ud):
+        key, stat, inc = ud
+        beacons = self.state.setdefault("beacons", {})
+        cur = beacons.setdefault(key, {"mining":1.0,"speed":1.0,"cargo":1.0}).get(stat, 1.0)
+        val = round(cur + inc, 4)
+        beacons[key][stat] = val
+        tag = f"bcn_{key}_{stat}"
+        if dpg.does_item_exist(tag):
+            dpg.set_value(tag, f"{val:.2f}")
+        save_state(self.state)
+        self._refresh_planets()
+        self._refresh_dashboard()
+
     # ── PLANETS ────────────────────────────────────────────────────────────────
     def _tab_planets(self):
         with dpg.group(horizontal=True):
@@ -1261,7 +1381,10 @@ class App:
             ps    = self.state["planets"][pid]
             owned = ps["owned"]; lvls = ps["levels"]
             probe = ps["probes"]; colony = ps["colony"]
-            mb = probe[0]*colony[0]*gm; sb = probe[1]*colony[1]*gs; cb = probe[2]*colony[2]*gc
+            bm = beacon_bonus(pid,"mining",self.base,self.state)
+            bs = beacon_bonus(pid,"speed", self.base,self.state)
+            bc = beacon_bonus(pid,"cargo", self.base,self.state)
+            mb = probe[0]*colony[0]*bm*gm; sb = probe[1]*colony[1]*bs*gs; cb = probe[2]*colony[2]*bc*gc
             mr = _mining_rate(lvls["mining"],mb) if owned else 0
             sp = _ship_speed( lvls["speed"], sb) if owned else 0
             cg = _ship_cargo( lvls["cargo"], cb) if owned else 0
@@ -1286,11 +1409,48 @@ class App:
                                  callback=self._cb_planet_owned)
                 dpg.add_text(ores, color=col)
                 lvl_grp("mining")
-                dpg.add_text(f"{mr:.3f}" if owned else "—", color=col)
+                with dpg.group():
+                    dpg.add_text(f"{mr:.3f}" if owned else "—", color=col)
+                    if owned:
+                        with dpg.tooltip(dpg.last_item()):
+                            base_mr = _mining_rate(lvls["mining"])
+                            dpg.add_text(f"Base:    {base_mr:.4f}")
+                            dpg.add_text(f"Probe:   ×{probe[0]:.2f}")
+                            dpg.add_text(f"Colony:  ×{colony[0]:.2f}")
+                            dpg.add_text(f"Beacon:  ×{bm:.2f}")
+                            if _proj(self.state,"Advanced Mining"):  dpg.add_text("Advanced Mining:  ×1.25")
+                            if _proj(self.state,"Superior Mining"):  dpg.add_text("Superior Mining:  ×1.25")
+                            manual_m = float(self.state.get("globals",{}).get("mining",1))
+                            if manual_m != 1.0: dpg.add_text(f"Manual:  ×{manual_m:.3f}")
+                            dpg.add_text(f"Total:   ×{mb/probe[0]/colony[0]/bm:.3f} global")
                 lvl_grp("speed")
-                dpg.add_text(f"{sp:.2f}" if owned else "—", color=col)
+                with dpg.group():
+                    dpg.add_text(f"{sp:.2f}" if owned else "—", color=col)
+                    if owned:
+                        with dpg.tooltip(dpg.last_item()):
+                            base_sp = _ship_speed(lvls["speed"])
+                            dpg.add_text(f"Base:    {base_sp:.4f}")
+                            dpg.add_text(f"Probe:   ×{probe[1]:.2f}")
+                            dpg.add_text(f"Colony:  ×{colony[1]:.2f}")
+                            dpg.add_text(f"Beacon:  ×{bs:.2f}")
+                            if _proj(self.state,"Advanced Thrusters"): dpg.add_text("Advanced Thrusters: ×1.25")
+                            if _proj(self.state,"Superior Thrusters"): dpg.add_text("Superior Thrusters: ×1.25")
+                            manual_s = float(self.state.get("globals",{}).get("speed",1))
+                            if manual_s != 1.0: dpg.add_text(f"Manual:  ×{manual_s:.3f}")
                 lvl_grp("cargo")
-                dpg.add_text(str(cg) if owned else "—", color=col)
+                with dpg.group():
+                    dpg.add_text(str(cg) if owned else "—", color=col)
+                    if owned:
+                        with dpg.tooltip(dpg.last_item()):
+                            base_cg = _ship_cargo(lvls["cargo"])
+                            dpg.add_text(f"Base:    {base_cg}")
+                            dpg.add_text(f"Probe:   ×{probe[2]:.2f}")
+                            dpg.add_text(f"Colony:  ×{colony[2]:.2f}")
+                            dpg.add_text(f"Beacon:  ×{bc:.2f}")
+                            if _proj(self.state,"Advanced Cargo Handling"): dpg.add_text("Adv Cargo Handling: ×1.25")
+                            if _proj(self.state,"Superior Cargo Handling"): dpg.add_text("Sup Cargo Handling: ×1.25")
+                            manual_c = float(self.state.get("globals",{}).get("cargo",1))
+                            if manual_c != 1.0: dpg.add_text(f"Manual:  ×{manual_c:.3f}")
                 # Probe bonuses (cols 11-13)
                 for idx in range(3):
                     dpg.add_input_text(default_value=str(probe[idx]),width=52,
@@ -1422,7 +1582,7 @@ class App:
     def _cb_reset(self):
         def _go(s, v, u):
             dpg.delete_item("reset_dlg")
-            if not v: return
+            if not u: return
             self.state = default_state(self.base)
             save_state(self.state)
             self._refresh_all()
@@ -1436,18 +1596,24 @@ class App:
     def _cb_sell_galaxy(self):
         def _go(s, v, u):
             dpg.delete_item("sell_dlg")
-            if not v: return
-            old_stars = {cat:{n:self.state[cat][n].get("stars",0) for n in self.state[cat]}
-                         for cat in ("ores","alloys","items")}
-            self.state = default_state(self.base)
+            if not u: return
+            new_state = default_state(self.base)
+            
+            # Copy stars over
             for cat in ("ores","alloys","items"):
                 for n in self.state[cat]:
-                    self.state[cat][n]["stars"] = old_stars[cat].get(n,0)
+                    new_state[cat][n]["stars"] = self.state[cat][n]["stars"]
+            
+            # Copy over states that don't get reset
+            for cat in ("globals", "beacons"):
+                new_state[cat] = self.state[cat].copy()
+            
+            self.state = copy.deepcopy(new_state)
             save_state(self.state)
             self._refresh_all()
         with dpg.window(label="Sell Galaxy?", modal=True, tag="sell_dlg",
                         width=360, height=130, pos=(540,360)):
-            dpg.add_text("Start a new galaxy?\n• Stars are kept\n• Everything else resets.")
+            dpg.add_text("Start a new galaxy?")
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Yes – Sell Galaxy", user_data=True,  callback=_go)
                 dpg.add_button(label="Cancel",             user_data=False, callback=_go)
@@ -1458,6 +1624,7 @@ class App:
         self._refresh_items()
         self._refresh_projects()
         self._refresh_colonies()
+        self._refresh_beacons()
         self._refresh_planets()
         self._refresh_dashboard()
         dpg.set_value("lbl_smelters", str(self.state.get("smelters",1)))
