@@ -87,6 +87,7 @@ def default_state(base: dict) -> dict:
         "colonies": [],
         "beacons":  {str(i): {"mining": 1.0, "speed": 1.0, "cargo": 1.0}
                      for i in range(23)},
+        "rooms":    {},
     }
 
 def _deep_merge(fresh: dict, saved: dict):
@@ -177,31 +178,61 @@ def _ship_cargo(lv: int, bonus: float=1.0) -> int:
 # ── global bonuses ─────────────────────────────────────────────────────────────
 def _proj(state, name): return state["projects"].get(name,{}).get("researched",False)
 
+# Module-level base reference set by App.__init__ so room_bonus can use it
+_g_base = {}
+
 def global_mining_bonus(state):
     v = float(state.get("globals",{}).get("mining",1))
     if _proj(state,"Advanced Mining"):  v *= 1.25
     if _proj(state,"Superior Mining"):  v *= 1.25
+    v *= room_bonus("mining", _g_base, state)
     return v
 
 def global_speed_bonus(state):
     v = float(state.get("globals",{}).get("speed",1))
     if _proj(state,"Advanced Thrusters"): v *= 1.25
     if _proj(state,"Superior Thrusters"): v *= 1.25
+    v *= room_bonus("speed", _g_base, state)
     return v
 
 def global_cargo_bonus(state):
     v = float(state.get("globals",{}).get("cargo",1))
     if _proj(state,"Advanced Cargo Handling"): v *= 1.25
     if _proj(state,"Superior Cargo Handling"): v *= 1.25
+    v *= room_bonus("cargo", _g_base, state)
     return v
 
-def global_smelt_speed(state): return float(state.get("globals",{}).get("smelt_speed",1))
-def global_craft_speed(state): return float(state.get("globals",{}).get("craft_speed",1))
+def global_smelt_speed(state):
+    v = float(state.get("globals",{}).get("smelt_speed",1))
+    v *= room_bonus("smelt_speed", _g_base, state)
+    return v
+
+def global_craft_speed(state):
+    v = float(state.get("globals",{}).get("craft_speed",1))
+    v *= room_bonus("craft_speed", _g_base, state)
+    return v
 
 def beacon_bonus(pid: str, stat: str, base: dict, state: dict) -> float:
     """Return the beacon multiplier for planet pid and stat (mining/speed/cargo)."""
     scope = str(base["planets"][pid]["telescope"])
     return float(state.get("beacons", {}).get(scope, {}).get(stat, 1.0))
+
+def room_bonus(stat: str, base: dict, state: dict) -> float:
+    """Return combined room multiplier for a given stat.
+    stat: mining | speed | cargo | smelt_speed | craft_speed
+    Effect = base_effect + (level-1)*per_level, applied as a multiplier.
+    """
+    total = 1.0
+    rooms_state = state.get("rooms", {})
+    for room in base.get("rooms", []):
+        if room.get("stat") != stat:
+            continue
+        level = rooms_state.get(room["name"], 0)
+        if level <= 0:
+            continue
+        effect = room["base_effect"] + (level - 1) * room["per_level"]
+        total *= effect
+    return total
 
 # ── time helpers ───────────────────────────────────────────────────────────────
 def total_smelt_time(name, cat, base, state):
@@ -273,6 +304,7 @@ def analyze_all(base, state):
 class App:
     def __init__(self):
         self.base  = load_base()
+        global _g_base; _g_base = self.base
         self.state = load_state(self.base)
         self.prefs = load_prefs()
 
@@ -294,6 +326,7 @@ class App:
                 with dpg.tab(label="  Planets    "): self._tab_planets()
                 with dpg.tab(label="  Colonies   "): self._tab_colonies()
                 with dpg.tab(label="  Beacons    "): self._tab_beacons()
+                with dpg.tab(label="  Rooms      "): self._tab_rooms()
 
         dpg.set_viewport_resize_callback(self._resize)
         dpg.create_viewport(title="Idle Planet Miner - Calculator",
@@ -1605,7 +1638,7 @@ class App:
                     new_state[cat][n]["stars"] = self.state[cat][n]["stars"]
             
             # Copy over states that don't get reset
-            for cat in ("globals", "beacons"):
+            for cat in ("globals", "beacons", "rooms"):
                 new_state[cat] = self.state[cat].copy()
             
             self.state = copy.deepcopy(new_state)
@@ -1618,6 +1651,140 @@ class App:
                 dpg.add_button(label="Yes – Sell Galaxy", user_data=True,  callback=_go)
                 dpg.add_button(label="Cancel",             user_data=False, callback=_go)
 
+
+    # ── ROOMS ──────────────────────────────────────────────────────────────────
+
+    def _tab_rooms(self):
+        with dpg.table(
+            tag="rooms_tbl", header_row=True, row_background=True,
+            borders_innerH=True, borders_outerH=True,
+            borders_innerV=True, borders_outerV=True,
+            scrollY=True, resizable=True,
+            policy=dpg.mvTable_SizingFixedFit, freeze_rows=1,
+        ):
+            for lbl, w in [
+                ("Unlocked", 68), ("Name", 140), ("Boost", 220),
+                ("Level", 100), ("Effect", 140),
+            ]:
+                dpg.add_table_column(label=lbl, width_fixed=True,
+                                     init_width_or_weight=w)
+
+    def _room_effect_str(self, room: dict, level: int) -> str:
+        """Compute display string for a room's effect at a given level."""
+        if level <= 0:
+            return "—"
+        base  = room["base_effect"]
+        per   = room["per_level"]
+        stat  = room.get("stat")
+        effect = base + (level - 1) * per
+        # Surge rooms (Probability Drive etc.) show tier
+        if stat is None and per == 1 and base == 0:
+            return f"T{level - 1}"
+        # Idle time room: show hours
+        if room["name"] == "Backup Generator":
+            hrs = effect
+            h = int(hrs); m = int((hrs - h) * 60)
+            return f"+{h}h{m:02d}m idle"
+        # Percentage rooms (base < 1, e.g. 0.90)
+        if base < 1.0:
+            return f"×{effect:.0%}"
+        # Multiplier rooms
+        return f"×{effect:.2f}"
+
+    def _refresh_rooms(self):
+        dpg.delete_item("rooms_tbl", children_only=True, slot=1)
+        rooms_state = self.state.get("rooms", {})
+
+        for room in self.base.get("rooms", []):
+            name     = room["name"]
+            level    = rooms_state.get(name, 0)
+            unlocked = level > 0
+            col      = C_TEXT if unlocked else (85, 85, 112, 255)
+            effect   = self._room_effect_str(room, level)
+            max_lv   = room["max_level"]
+
+            with dpg.table_row(parent="rooms_tbl"):
+                dpg.add_checkbox(
+                    default_value=unlocked,
+                    user_data=name,
+                    callback=self._cb_room_unlock)
+
+                dpg.add_text(name, color=col)
+                dpg.add_text(room["boost"], color=C_MUTED)
+
+                # Level widget: input_int + + button (like Stars)
+                with dpg.group(horizontal=True):
+                    dpg.add_spacer(width=-1)
+                    dpg.add_input_int(
+                        default_value=level,
+                        width=42, step=0,
+                        min_value=0, min_clamped=True,
+                        max_value=max_lv, max_clamped=True,
+                        enabled=unlocked,
+                        tag=f"room_lv_{name}",
+                        user_data=name,
+                        callback=self._cb_room_level_edit)
+                    dpg.add_button(
+                        label="+", width=22,
+                        enabled=unlocked,
+                        user_data=(name, 1),
+                        callback=self._cb_room_level_inc)
+
+                dpg.add_text(effect, tag=f"room_ef_{name}",
+                             color=C_TEAL if unlocked else C_MUTED)
+
+    def _cb_room_unlock(self, s, v, ud):
+        name = ud
+        rooms_state = self.state.setdefault("rooms", {})
+        if v:
+            # Unlock at level 1 if not already levelled
+            if rooms_state.get(name, 0) == 0:
+                rooms_state[name] = 1
+        else:
+            rooms_state[name] = 0
+        save_state(self.state)
+        self._refresh_rooms()
+        # Rooms affect global bonuses — refresh everything that uses them
+        self._refresh_planets()
+        self._refresh_alloys()
+        self._refresh_items()
+        self._refresh_dashboard()
+
+    def _cb_room_level_inc(self, s, v, ud):
+        name, delta = ud
+        rooms_state = self.state.setdefault("rooms", {})
+        room = next((r for r in self.base.get("rooms", []) if r["name"] == name), None)
+        if room is None:
+            return
+        cur = rooms_state.get(name, 0)
+        new_lv = max(0, min(room["max_level"], cur + delta))
+        rooms_state[name] = new_lv
+        if dpg.does_item_exist(f"room_lv_{name}"):
+            dpg.set_value(f"room_lv_{name}", new_lv)
+        if dpg.does_item_exist(f"room_ef_{name}"):
+            dpg.set_value(f"room_ef_{name}", self._room_effect_str(room, new_lv))
+        save_state(self.state)
+        self._refresh_planets()
+        self._refresh_alloys()
+        self._refresh_items()
+        self._refresh_dashboard()
+
+    def _cb_room_level_edit(self, s, v, ud):
+        name = ud
+        rooms_state = self.state.setdefault("rooms", {})
+        room = next((r for r in self.base.get("rooms", []) if r["name"] == name), None)
+        if room is None:
+            return
+        new_lv = max(0, min(room["max_level"], int(v)))
+        rooms_state[name] = new_lv
+        if dpg.does_item_exist(f"room_ef_{name}"):
+            dpg.set_value(f"room_ef_{name}", self._room_effect_str(room, new_lv))
+        save_state(self.state)
+        self._refresh_planets()
+        self._refresh_alloys()
+        self._refresh_items()
+        self._refresh_dashboard()
+
     def _refresh_all(self):
         self._refresh_ores()
         self._refresh_alloys()
@@ -1625,6 +1792,7 @@ class App:
         self._refresh_projects()
         self._refresh_colonies()
         self._refresh_beacons()
+        self._refresh_rooms()
         self._refresh_planets()
         self._refresh_dashboard()
         dpg.set_value("lbl_smelters", str(self.state.get("smelters",1)))

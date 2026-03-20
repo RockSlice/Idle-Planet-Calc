@@ -207,12 +207,27 @@
     "69": {"name": "Pontus",     "base_price": 800000000000000000000000000,"telescope": 22,"resources": {"Wraith": 80, "Luterium": 20},        "distance": 115},
     "70": {"name": "Leto",       "base_price": 2400000000000000000000000000,"telescope": 22,"resources": {"Wraith": 100},                      "distance": 116}
   },
-  "rooms": {
-	  "Engineering":  {"base_effect": 1.25, "per_level": 0.15,  "max_level": 60, "max_bonus": 10.1},
-	  "Forge":        {"base_effect": 1.20, "per_level": 0.10,  "max_level": 60, "max_bonus": 10.1},
-	  "Aeronautical": {"base_effect": 1.50, "per_level": 0.25,  "max_level": 60, "max_bonus": 10.1},
-	  "Astronomy":    {"base_effect": 0.90, "per_level": -0.04, "max_level": 10, "max_bonus": 0.5},
-	  "Packaging":    {"base_effect": 1.50, "per_level": 0.25,  "max_level": 60, "max_bonus": 10.1},
-	  "Workshop":     {"base_effect": 1.20, "per_level": 0.10,  "max_level": 60, "max_bonus": 10.1}
-  }
+  "rooms": [
+	{"name":"Engineering",       "boost":"Increase mine speed",            "stat":"mining",      "base_effect":1.25, "per_level":0.15,"max_level":60,"max_bonus":10.1},
+	{"name":"Forge",             "boost":"Increase smelt speed",           "stat":"smelt_speed", "base_effect":1.2,  "per_level":0.1,"max_level":60,"max_bonus":7.1},
+	{"name":"Aeronautical",      "boost":"Increase ship speed",            "stat":"speed",       "base_effect":1.5,  "per_level":0.25,"max_level":60,"max_bonus":16.25},
+	{"name":"Astronomy",         "boost":"Reduce planet upgrade prices",   "stat":null,          "base_effect":0.9,  "per_level":-0.04,"max_level":11,"max_bonus":0.5},
+	{"name":"Packaging",         "boost":"Increase cargo",                 "stat":"cargo",       "base_effect":1.5,  "per_level":0.25,"max_level":60,"max_bonus":16.25},
+	{"name":"Workshop",          "boost":"Increase craft speed",           "stat":"craft_speed", "base_effect":1.2,  "per_level":0.1,"max_level":60,"max_bonus":7.1},
+	{"name":"Laboratory",        "boost":"Decrease project cost",          "stat":null,          "base_effect":0.9,  "per_level":-0.04,"max_level":11,"max_bonus":0.5},
+	{"name":"Robotics",          "boost":"Decrease rover time",            "stat":null,          "base_effect":0.9,  "per_level":-0.04,"max_level":11,"max_bonus":0.5},
+	{"name":"Lounge",            "boost":"Increase credits earned",        "stat":null,          "base_effect":1.15, "per_level":0.05,"max_level":60,"max_bonus":4.1},
+	{"name":"Backup Generator",  "boost":"Increase max idle time",         "stat":null,          "base_effect":0.5,  "per_level":0.5,"max_level":44,"max_bonus":24},
+	{"name":"Terrarium",         "boost":"Decrease colonization cost",     "stat":null,          "base_effect":0.9,  "per_level":-0.04,"max_level":11,"max_bonus":0.5},
+	{"name":"Underforge",        "boost":"Decrease smelter ingredients",   "stat":null,          "base_effect":0.9,  "per_level":-0.04,"max_level":11,"max_bonus":0.5},
+	{"name":"Dorm",              "boost":"Decrease crafter ingredients",   "stat":null,          "base_effect":0.9,  "per_level":-0.04,"max_level":11,"max_bonus":0.5},
+	{"name":"Probability Drive", "boost":"Enables Surges (50% roll)",      "stat":null,          "base_effect":0,    "per_level":1,"max_level":23,"max_bonus":23},
+	{"name":"Sales",             "boost":"Increase alloy and item value",  "stat":null,          "base_effect":1.15, "per_level":0.05,"max_level":60,"max_bonus":4.1},
+	{"name":"Classroom",         "boost":"All manager bonuses",            "stat":null,          "base_effect":1.15, "per_level":0.05,"max_level":60,"max_bonus":4.1},
+	{"name":"Marketing",         "boost":"Increase market bonuses",        "stat":null,          "base_effect":1.3,  "per_level":0.1,"max_level":60,"max_bonus":7.2},
+	{"name":"Planet Relations",  "boost":"Colonizing bonuses",             "stat":null,          "base_effect":1.25, "per_level":0.1,"max_level":60,"max_bonus":7.15},
+	{"name":"Belt Studies",      "boost":"Asteroid and debris value",      "stat":null,          "base_effect":1.25, "per_level":0.1,"max_level":60,"max_bonus":7.15},
+	{"name":"Crew Quarters",     "boost":"Additional 20% roll for surges", "stat":null,          "base_effect":0,    "per_level":1,"max_level":23,"max_bonus":23},
+	{"name":"Eleven Forward",    "boost":"Additional 10% roll for surges", "stat":null,          "base_effect":0,    "per_level":1,"max_level":23,"max_bonus":23}
+  ]
 }
