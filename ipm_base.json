@@ -206,5 +206,13 @@
     "68": {"name": "Gorgons",    "base_price": 270000000000000000000000000,"telescope": 22,"resources": {"Wraith": 60, "Xynium": 40},          "distance": 114},
     "69": {"name": "Pontus",     "base_price": 800000000000000000000000000,"telescope": 22,"resources": {"Wraith": 80, "Luterium": 20},        "distance": 115},
     "70": {"name": "Leto",       "base_price": 2400000000000000000000000000,"telescope": 22,"resources": {"Wraith": 100},                      "distance": 116}
+  },
+  "rooms": {
+	  "Engineering":  {"base_effect": 1.25, "per_level": 0.15,  "max_level": 60, "max_bonus": 10.1},
+	  "Forge":        {"base_effect": 1.20, "per_level": 0.10,  "max_level": 60, "max_bonus": 10.1},
+	  "Aeronautical": {"base_effect": 1.50, "per_level": 0.25,  "max_level": 60, "max_bonus": 10.1},
+	  "Astronomy":    {"base_effect": 0.90, "per_level": -0.04, "max_level": 10, "max_bonus": 0.5},
+	  "Packaging":    {"base_effect": 1.50, "per_level": 0.25,  "max_level": 60, "max_bonus": 10.1},
+	  "Workshop":     {"base_effect": 1.20, "per_level": 0.10,  "max_level": 60, "max_bonus": 10.1}
   }
 }
