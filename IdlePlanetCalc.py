@@ -89,6 +89,7 @@ def default_state(base: dict) -> dict:
         "beacons":  {str(i): {"mining": 1.0, "speed": 1.0, "cargo": 1.0}
                      for i in range(23)},
         "rooms":    {},
+        "managers": [],
     }
 
 def _deep_merge(fresh: dict, saved: dict):
@@ -199,6 +200,7 @@ def global_mining_bonus(state):
     if _proj(state,"Advanced Mining"):  v *= 1.25
     if _proj(state,"Superior Mining"):  v *= 1.25
     v *= room_bonus("mining", _g_base, state)
+    v *= manager_secondary_bonus("mining", state)
     return v
 
 def global_speed_bonus(state):
@@ -206,6 +208,7 @@ def global_speed_bonus(state):
     if _proj(state,"Advanced Thrusters"): v *= 1.25
     if _proj(state,"Superior Thrusters"): v *= 1.25
     v *= room_bonus("speed", _g_base, state)
+    v *= manager_secondary_bonus("speed", state)
     return v
 
 def global_cargo_bonus(state):
@@ -213,16 +216,19 @@ def global_cargo_bonus(state):
     if _proj(state,"Advanced Cargo Handling"): v *= 1.25
     if _proj(state,"Superior Cargo Handling"): v *= 1.25
     v *= room_bonus("cargo", _g_base, state)
+    v *= manager_secondary_bonus("cargo", state)
     return v
 
 def global_smelt_speed(state):
     v = float(state.get("globals",{}).get("smelt_speed",1))
     v *= room_bonus("smelt_speed", _g_base, state)
+    v *= manager_secondary_bonus("smelt_speed", state)
     return v
 
 def global_craft_speed(state):
     v = float(state.get("globals",{}).get("craft_speed",1))
     v *= room_bonus("craft_speed", _g_base, state)
+    v *= manager_secondary_bonus("craft_speed", state)
     return v
 
 def beacon_bonus(pid: str, stat: str, base: dict, state: dict) -> float:
@@ -246,6 +252,45 @@ def room_bonus(stat: str, base: dict, state: dict) -> float:
         effect = room["base_effect"] + (level - 1) * room["per_level"]
         total *= effect
     return total
+
+
+# ── manager bonus tables ──────────────────────────────────────────────────────
+# Primary multiplier by star count (index 0 = 1 star)
+_MGR_PRIMARY = {
+    "mining": [1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.95],
+    "speed":  [1.50, 2.00, 2.50, 3.00, 3.50, 4.00, 4.90],
+    "cargo":  [1.50, 2.00, 2.50, 3.00, 3.50, 4.00, 4.90],
+}
+# Secondary additive bonus by star count (index 0 = 1 star; 0 at <3 stars)
+_MGR_SECONDARY = {
+    "mining":      [1.00, 1.00, 1.05, 1.10, 1.20, 1.30, 1.50],
+    "speed":       [1.00, 1.00, 1.10, 1.20, 1.40, 1.60, 2.00],
+    "cargo":       [1.00, 1.00, 1.10, 1.20, 1.40, 1.60, 2.00],
+    "smelt_speed": [1.00, 1.00, 1.05, 1.10, 1.20, 1.40, 1.70],
+    "craft_speed": [1.00, 1.00, 1.05, 1.10, 1.20, 1.40, 1.70],
+}
+
+def manager_primary_bonus(pid: str, stat: str, state: dict) -> float:
+    """Multiplicative primary bonus from the manager assigned to planet pid."""
+    for mgr in state.get("managers", []):
+        if mgr.get("planet") == pid and mgr.get("primary") == stat:
+            stars = max(1, min(7, mgr.get("stars", 1)))
+            return _MGR_PRIMARY[stat][stars - 1]
+    return 1.0
+
+def manager_secondary_bonus(stat: str, state: dict) -> float:
+    """Combined additive secondary bonus across all ASSIGNED managers for stat.
+    Only managers with a planet assigned contribute.
+    Returns a multiplier: 1.0 + sum of individual additive bonuses.
+    """
+    total = 0.0
+    for mgr in state.get("managers", []):
+        if not mgr.get("planet"):
+            continue
+        if mgr.get("secondary") == stat:
+            stars = max(1, min(7, mgr.get("stars", 1)))
+            total = total * (_MGR_SECONDARY.get(stat, [0.0]*7)[stars - 1])
+    return 1.0 + total
 
 # ── time helpers ───────────────────────────────────────────────────────────────
 def total_smelt_time(name, cat, base, state):
@@ -338,6 +383,7 @@ class App:
                 with dpg.tab(label="  Projects   "): self._tab_projects()
                 with dpg.tab(label="  Planets    "): self._tab_planets()
                 with dpg.tab(label="  Colonies   "): self._tab_colonies()
+                with dpg.tab(label="  Managers   "): self._tab_managers()
                 with dpg.tab(label="  Beacons    "): self._tab_beacons()
                 with dpg.tab(label="  Rooms      "): self._tab_rooms()
 
@@ -416,6 +462,17 @@ class App:
             self._no_star_size = (w, h)
         except Exception as e:
             print(f"[warn] Could not load noStar.png: {e}")
+        
+        for img_name in ["star_white", "star_black"]:
+            img_path = f"{SCRIPT_DIR}/Images/{img_name}.png"
+            if os.path.exists(img_path):
+                img = Image.open(img_path).convert("RGBA")
+                w,h = img.size
+                flat = [c / 255.0 for px in img.getdata() for c in px]
+                with dpg.texture_registry():
+                    dpg.add_static_texture(
+                            width=w, height=h, default_value=flat, tag=img_name)
+        
         self._arrow_right = None
         arrow_right_path = os.path.join(SCRIPT_DIR, "Images/Arrow_Right.png")
         try:
@@ -651,14 +708,31 @@ class App:
                     (dpg.mvThemeCol_Button,      C_BTN_DIS)
                 ]:
                     dpg.add_theme_color(col,val)
+            with dpg.theme_component(dpg.mvCombo, enabled_state=False):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, C_BTN_DIS)
+                dpg.add_theme_color(dpg.mvThemeCol_Button, C_BTN_DIS)
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, C_BTN_DIS)
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBgHovered, C_ENTRY)
         dpg.bind_theme(th)
         
         with dpg.theme(tag="red_button_theme"):
             with dpg.theme_component(dpg.mvAll):
-                dpg.add_theme_color(dpg.mvThemeCol_Button, (200,0,0))
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (200,0,0))
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (150,0,0))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (170,0,0))
                 dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (230,0,0))
                 dpg.add_theme_color(dpg.mvThemeCol_Text, (0,0,0))
+                
+        with dpg.theme(tag="clear_button"):
+            with dpg.theme_component(dpg.mvAll):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (0,0,0,0))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (0,0,0,0))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (0,0,0,0))
+                dpg.add_theme_style(dpg.mvStyleVar_FrameRounding,  0)
+                dpg.add_theme_style(dpg.mvStyleVar_FramePadding,  0, 5)
+                dpg.add_theme_style(dpg.mvStyleVar_WindowRounding,  0)
+                dpg.add_theme_style(dpg.mvStyleVar_TabRounding,     0)
+                dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing,     0, 0)
+                dpg.add_theme_style(dpg.mvStyleVar_CellPadding,     0, 0)
             
 
     def _resize(self, *_):
@@ -1011,6 +1085,203 @@ class App:
         self._refresh_projects()
         self._refresh_dashboard()
 
+
+
+    # ── MANAGERS ───────────────────────────────────────────────────────────────
+    # State: state["managers"] = list of dicts:
+    #   {"name": str, "planet": str|"", "primary": str, "secondary": str, "stars": int}
+
+    _PRIMARY_OPTS   = ["Mine Rate", "Ship Speed", "Cargo"]
+    _PRIMARY_KEYS   = ["mining",    "speed",      "cargo"]
+    _SECONDARY_OPTS = ["All Mine Rate", "All Ship Speed", "All Cargo",
+                       "All Craft Speed", "All Smelt Speed", "-"]
+    _SECONDARY_KEYS = ["mining",        "speed",          "cargo",
+                       "craft_speed",   "smelt_speed",    "none"]
+
+    def _mgr_primary_label(self, key):
+        try: return self._PRIMARY_OPTS[self._PRIMARY_KEYS.index(key)]
+        except: return key
+
+    def _mgr_secondary_label(self, key):
+        try: return self._SECONDARY_OPTS[self._SECONDARY_KEYS.index(key)]
+        except: return key
+
+    def _mgr_primary_mult(self, primary, stars):
+        stars = max(1, min(7, stars))
+        return _MGR_PRIMARY.get(primary, [1.0]*7)[stars - 1]
+
+    def _mgr_secondary_mult(self, secondary, stars):
+        if secondary == "none" or stars < 3: return 0.0
+        stars = max(1, min(7, stars))
+        return _MGR_SECONDARY.get(secondary, [0.0]*7)[stars - 1]
+
+    def _mgr_secondary_display(self, secondary, stars):
+        add = self._mgr_secondary_mult(secondary, stars)
+        if secondary == "none" or stars < 3: return "—"
+        return f"x{1.0 + add:.2f}"
+
+    def _tab_managers(self):
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="+ Add Manager", callback=self._cb_mgr_add)
+        with dpg.table(
+            tag="mgr_tbl", header_row=True, row_background=True,
+            borders_innerH=True, borders_outerH=True,
+            borders_innerV=True, borders_outerV=True,
+            scrollY=True, scrollX=True, resizable=True,
+            policy=dpg.mvTable_SizingFixedFit, freeze_rows=1,
+        ):
+            for lbl, w in [
+                ("",18), ("Name",140), ("Planet",150), ("Stars",225),
+                ("Primary",115), ("",80), ("Secondary",130), ("",80),
+            ]:
+                dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
+
+    def _refresh_managers(self):
+        dpg.delete_item("mgr_tbl", children_only=True, slot=1)
+        managers = self.state.get("managers", [])
+        planet_opts = [""] + [
+            f"{pid}: {self.base['planets'][pid]['name']}"
+            for pid, ps in sorted(self.state["planets"].items(), key=lambda x: int(x[0]))
+            if ps["owned"]
+        ]
+        for idx, mgr in enumerate(managers):
+            name      = mgr.get("name", f"Manager {idx+1}")
+            planet    = mgr.get("planet", "")
+            stars     = max(1, min(7, mgr.get("stars", 1)))
+            primary   = mgr.get("primary", "mining")
+            secondary = mgr.get("secondary", "none")
+            planet_display = (f"{planet}: {self.base['planets'][planet]['name']}"
+                              if planet else "")
+            pri_mult = self._mgr_primary_mult(primary, stars)
+            sec_disp = self._mgr_secondary_display(secondary, stars)
+
+            with dpg.table_row(parent="mgr_tbl"):
+                x_button = dpg.add_button(label="X", 
+                               user_data=idx, callback=self._cb_mgr_delete)
+                dpg.bind_item_theme(x_button, "red_button_theme")
+                
+                dpg.add_input_text(default_value=name, width=135,
+                                   tag=f"mgr_name_{idx}", user_data=idx,
+                                   on_enter=True, callback=self._cb_mgr_name)
+                dpg.add_combo(items=planet_opts, default_value=planet_display,
+                              width=145, user_data=idx,
+                              callback=self._cb_mgr_planet)
+                # 7 star images
+                with dpg.group(horizontal=True):
+                    for si in range(1, 8):
+                        tex = "star_white" if si <= stars else "star_black"
+                        dpg.add_image_button(
+                            texture_tag=tex,
+                            width=20, height=20,
+                            tag=f"mgr_star_{idx}_{si}",
+                            user_data=(idx, si),
+                            callback=self._cb_mgr_star_click)
+                        dpg.bind_item_theme(f"mgr_star_{idx}_{si}", "clear_button")
+                        
+                dpg.add_combo(items=self._PRIMARY_OPTS,
+                              default_value=self._mgr_primary_label(primary),
+                              width=110, user_data=idx,
+                              callback=self._cb_mgr_primary)
+                dpg.add_text(f"x{pri_mult:.2f}", color=C_TEAL, tag=f"mgr_pri_eff_{idx}")
+                dpg.add_combo(items=self._SECONDARY_OPTS,
+                              default_value=self._mgr_secondary_label(secondary),
+                              width=125, user_data=idx,
+                              callback=self._cb_mgr_secondary)
+                dpg.add_text(sec_disp,
+                             color=C_TEAL if sec_disp != "—" else C_MUTED,
+                             tag=f"mgr_sec_eff_{idx}")
+
+    def _mgr_assign_planet(self, mgr_idx, new_pid):
+        managers = self.state.setdefault("managers", [])
+        for i, m in enumerate(managers):
+            if i != mgr_idx and m.get("planet") == new_pid:
+                m["planet"] = ""
+        managers[mgr_idx]["planet"] = new_pid
+
+    def _cb_mgr_add(self):
+        self.state.setdefault("managers", []).append({
+            "name": f"Manager {len(self.state['managers'])+1}",
+            "planet": "", "primary": "mining", "secondary": "none", "stars": 1
+        })
+        save_state(self.state)
+        self._refresh_managers()
+
+    def _cb_mgr_delete(self, s, v, ud):
+        mgrs = self.state.get("managers", [])
+        if 0 <= ud < len(mgrs): mgrs.pop(ud)
+        save_state(self.state)
+        self._refresh_managers()
+        self._refresh_planets()
+        self._refresh_dashboard()
+
+    def _cb_mgr_name(self, s, v, ud):
+        self.state["managers"][ud]["name"] = v.strip() or f"Manager {ud+1}"
+        save_state(self.state)
+
+    def _cb_mgr_planet(self, s, v, ud):
+        pid = v.split(":")[0].strip() if v else ""
+        self._mgr_assign_planet(ud, pid)
+        save_state(self.state)
+        self._refresh_managers()
+        self._refresh_planets()
+        self._refresh_dashboard()
+
+    def _cb_mgr_star_click(self, s, v, ud):
+        idx, si = ud
+        self.state["managers"][idx]["stars"] = si
+        save_state(self.state)
+        for sj in range(1, 8):
+            tag = f"mgr_star_{idx}_{sj}"
+            if dpg.does_item_exist(tag):
+                dpg.configure_item(tag, texture_tag=("star_white" if sj<=si else "star_black"))
+        mgr = self.state["managers"][idx]
+        pri_mult = self._mgr_primary_mult(mgr["primary"], si)
+        if dpg.does_item_exist(f"mgr_pri_eff_{idx}"):
+            dpg.set_value(f"mgr_pri_eff_{idx}", f"x{pri_mult:.2f}")
+        sec_disp = self._mgr_secondary_display(mgr["secondary"], si)
+        if dpg.does_item_exist(f"mgr_sec_eff_{idx}"):
+            dpg.set_value(f"mgr_sec_eff_{idx}", sec_disp)
+        self._refresh_planets()
+        self._refresh_dashboard()
+
+    def _cb_mgr_primary(self, s, v, ud):
+        try: key = self._PRIMARY_KEYS[self._PRIMARY_OPTS.index(v)]
+        except: return
+        self.state["managers"][ud]["primary"] = key
+        stars = self.state["managers"][ud].get("stars", 1)
+        if dpg.does_item_exist(f"mgr_pri_eff_{ud}"):
+            dpg.set_value(f"mgr_pri_eff_{ud}", f"x{self._mgr_primary_mult(key,stars):.2f}")
+        save_state(self.state)
+        self._refresh_planets()
+        self._refresh_dashboard()
+
+    def _cb_mgr_secondary(self, s, v, ud):
+        try: key = self._SECONDARY_KEYS[self._SECONDARY_OPTS.index(v)]
+        except: return
+        self.state["managers"][ud]["secondary"] = key
+        stars = self.state["managers"][ud].get("stars", 1)
+        sec_disp = self._mgr_secondary_display(key, stars)
+        if dpg.does_item_exist(f"mgr_sec_eff_{ud}"):
+            dpg.set_value(f"mgr_sec_eff_{ud}", sec_disp)
+        save_state(self.state)
+        self._refresh_planets()
+        self._refresh_dashboard()
+
+    def _cb_planet_manager(self, s, v, ud):
+        pid = ud
+        mgr_name = v.strip() if v else ""
+        managers = self.state.setdefault("managers", [])
+        for m in managers:
+            if m.get("planet") == pid: m["planet"] = ""
+        if mgr_name:
+            for i, m in enumerate(managers):
+                if m.get("name") == mgr_name:
+                    self._mgr_assign_planet(i, pid)
+                    break
+        save_state(self.state)
+        self._refresh_managers()
+        self._refresh_planets()
+        self._refresh_dashboard()
 
     # ── COLONIES ───────────────────────────────────────────────────────────────
     # Colony rows are stored in state["colonies"] as a list of dicts:
@@ -1407,7 +1678,8 @@ class App:
                        policy=dpg.mvTable_SizingFixedFit, freeze_rows=2):
             # 19 columns: 11 main + 3 probe + 3 colony + 2 separator
             for w in [
-                28, 105, 45, 27, 210,   # #, Planet, Scope, Owned, Ores
+                28, 105, 25, 27,    # #, Planet, Scope, Owned, 
+                140,                    # Manager
                 58, 72,                 # M.Lvl, Min/s
                 62,                     # Calculated transport speed
                 58, 62,                 # S.Lvl, Spd
@@ -1416,6 +1688,7 @@ class App:
                 5,
                 50, 50, 50,             # Colony: Mng, Spd, Crg
                 5,
+                210,                    # Ores
             ]:
                 dpg.add_table_column(label="", width_fixed=True, init_width_or_weight=w)
 
@@ -1469,6 +1742,9 @@ class App:
         self._refresh_dashboard()
 
     def _refresh_planets(self):
+        # Save scroll position
+        scroll_y = dpg.get_y_scroll("planet_tbl")
+        
         dpg.delete_item("planet_tbl", children_only=True, slot=1)
         gm=global_mining_bonus(self.state); gs=global_speed_bonus(self.state); gc=global_cargo_bonus(self.state)
         # update bonus comp labels
@@ -1480,7 +1756,7 @@ class App:
         # ── header row 1: group span labels ──────────────────────────────────
         with dpg.table_row(parent="planet_tbl"):
             # columns 0-10: plain labels, no group heading
-            for lbl in ["","","","","","","","","","",""]:
+            for lbl in ["","","","","","","","","","","",""]:
                 dpg.add_text(lbl, color=C_ACCENT)
             # columns 11-13: "Probes" spanning — place in col 11, overflow right
 
@@ -1493,6 +1769,7 @@ class App:
             dpg.add_text("Colony", color=C_TEAL)
             dpg.add_text("---->", color=C_TEAL) 
             dpg.add_text() #Divider
+            dpg.add_text("")
 
         # ── header row 2: sub-column labels ──────────────────────────────────
         with dpg.table_row(parent="planet_tbl"):
@@ -1500,11 +1777,12 @@ class App:
             for lbl in ["#","Planet"]:
                 dpg.add_text(lbl, color=C_ACCENT)
             dpg.add_image(self._telescope, width=self._telescope_size[0], height=self._telescope_size[1])
-            for lbl in [" ","Ores",
+            for lbl in [" ","Manager",
                          "M.Lvl","Ore/s","Transport","S.Lvl","Speed","C.Lvl","Cargo"]:
                 dpg.add_text(lbl, color=C_ACCENT)
             for lbl in ["Mng","Spd","Crg","","Mng","Spd","Crg",""]:
                 dpg.add_text(lbl, color=C_MUTED)
+            dpg.add_text("Ores", color=C_ACCENT)
 
         for pid, bd in sorted(self.base["planets"].items(), key=lambda x:int(x[0])):
             ps    = self.state["planets"][pid]
@@ -1514,7 +1792,12 @@ class App:
             bm = beacon_bonus(pid,"mining",self.base,self.state)
             bs = beacon_bonus(pid,"speed", self.base,self.state)
             bc = beacon_bonus(pid,"cargo", self.base,self.state)
-            mb = probe[0]*colony[0]*bm*gm; sb = probe[1]*colony[1]*bs*gs; cb = probe[2]*colony[2]*bc*gc
+            mm = manager_primary_bonus(pid,"mining",self.state)
+            ms = manager_primary_bonus(pid,"speed", self.state)
+            mc = manager_primary_bonus(pid,"cargo", self.state)
+            mb = probe[0]*colony[0]*bm*mm*gm
+            sb = probe[1]*colony[1]*bs*ms*gs
+            cb = probe[2]*colony[2]*bc*mc*gc
             mr = _mining_rate(lvls["mining"],mb) if owned else 0
             sp = _ship_speed( lvls["speed"], sb) if owned else 0
             cg = _ship_cargo( lvls["cargo"], cb) if owned else 0
@@ -1536,7 +1819,12 @@ class App:
                 dpg.add_text(scope, color=C_MUTED)
                 dpg.add_checkbox(default_value=owned, user_data=pid,
                                  callback=self._cb_planet_owned)
-                dpg.add_text(ores, color=col)
+                # Manager column
+                mgr_names = [""] + [m["name"] for m in self.state.get("managers", [])]
+                cur_mgr = next((m["name"] for m in self.state.get("managers", []) if m.get("planet")==pid), "")
+                dpg.add_combo(items=mgr_names, default_value=cur_mgr,
+                              width=135, user_data=pid, enabled=owned,
+                              callback=self._cb_planet_manager)
                 lvl_grp("mining")
                 with dpg.group():
                     dpg.add_text(f"{mr:.2f}" if owned else "—", color=col)
@@ -1547,11 +1835,13 @@ class App:
                             dpg.add_text(f"Probe:   ×{probe[0]:.2f}")
                             dpg.add_text(f"Colony:  ×{colony[0]:.2f}")
                             dpg.add_text(f"Beacon:  ×{bm:.2f}")
+                            if mm != 1.0: dpg.add_text(f"Manager: ×{mm:.2f}")
                             if _proj(self.state,"Advanced Mining"):  dpg.add_text("Advanced Mining:  ×1.25")
                             if _proj(self.state,"Superior Mining"):  dpg.add_text("Superior Mining:  ×1.25")
                             manual_m = float(self.state.get("globals",{}).get("mining",1))
                             if manual_m != 1.0: dpg.add_text(f"Manual:  ×{manual_m:.3f}")
-                            dpg.add_text(f"Total:   ×{mb/probe[0]/colony[0]/bm:.3f} global")
+                            msec_m = manager_secondary_bonus("mining", self.state)
+                            if msec_m != 1.0: dpg.add_text(f"Mgr Sec: ×{msec_m:.3f} (global)")
                 
                 ts = _planet_transport(dist, sp, cg)
                 dpg.add_text(f"{ts:.1f}", color=C_TEAL)
@@ -1565,10 +1855,13 @@ class App:
                             dpg.add_text(f"Probe:   ×{probe[1]:.2f}")
                             dpg.add_text(f"Colony:  ×{colony[1]:.2f}")
                             dpg.add_text(f"Beacon:  ×{bs:.2f}")
+                            if ms != 1.0: dpg.add_text(f"Manager: ×{ms:.2f}")
                             if _proj(self.state,"Advanced Thrusters"): dpg.add_text("Advanced Thrusters: ×1.25")
                             if _proj(self.state,"Superior Thrusters"): dpg.add_text("Superior Thrusters: ×1.25")
                             manual_s = float(self.state.get("globals",{}).get("speed",1))
                             if manual_s != 1.0: dpg.add_text(f"Manual:  ×{manual_s:.3f}")
+                            msec_s = manager_secondary_bonus("speed", self.state)
+                            if msec_s != 1.0: dpg.add_text(f"Mgr Sec: ×{msec_s:.3f} (global)")
                 lvl_grp("cargo")
                 with dpg.group():
                     dpg.add_text(str(cg) if owned else "—", color=col)
@@ -1579,10 +1872,13 @@ class App:
                             dpg.add_text(f"Probe:   ×{probe[2]:.2f}")
                             dpg.add_text(f"Colony:  ×{colony[2]:.2f}")
                             dpg.add_text(f"Beacon:  ×{bc:.2f}")
+                            if mc != 1.0: dpg.add_text(f"Manager: ×{mc:.2f}")
                             if _proj(self.state,"Advanced Cargo Handling"): dpg.add_text("Adv Cargo Handling: ×1.25")
                             if _proj(self.state,"Superior Cargo Handling"): dpg.add_text("Sup Cargo Handling: ×1.25")
                             manual_c = float(self.state.get("globals",{}).get("cargo",1))
                             if manual_c != 1.0: dpg.add_text(f"Manual:  ×{manual_c:.3f}")
+                            msec_c = manager_secondary_bonus("cargo", self.state)
+                            if msec_c != 1.0: dpg.add_text(f"Mgr Sec: ×{msec_c:.3f} (global)")
                 # Probe bonuses (cols 11-13)
                 for idx in range(3):
                     dpg.add_input_text(default_value=str(probe[idx]),width=52,
@@ -1596,7 +1892,11 @@ class App:
                                        on_enter=True,
                                        user_data=(pid,"colony",idx),
                                        callback=self._cb_planet_bonus_val)
-
+                dpg.add_text("")
+                dpg.add_text(ores, color=col)
+        
+        # Restore scroll position
+        dpg.set_y_scroll("planet_tbl", scroll_y)
 
     def _market_widget(self, img_tag: str, mkt: int, user_data: tuple):
         """Render  −  [chevron image]  +  for a market cell."""
@@ -1893,6 +2193,7 @@ class App:
         self._refresh_beacons()
         self._refresh_rooms()
         self._refresh_planets()
+        self._refresh_managers()
         self._refresh_dashboard()
         dpg.set_value("lbl_smelters", str(self.state.get("smelters",1)))
         dpg.set_value("lbl_crafters", str(self.state.get("crafters",1)))
