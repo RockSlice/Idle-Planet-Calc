@@ -176,6 +176,18 @@ def _ship_cargo(lv: int, bonus: float=1.0) -> int:
     l = lv - 1
     return round(bonus * (5.0 + 2.0*l + (0.1*(l**2))))
 
+def _planet_transport(dist: int, speed: float, cargo: int):
+    # dist is in Mkm times some factor - pulled from wiki (probably guesses)
+    # speed is in Mkm/h
+    if speed == 0:
+        return 0
+    dist = dist * 2 # account for return trip
+    Mkps = speed * 3
+    
+    # return cargo per second
+    transport = cargo * (Mkps / dist)
+    return transport
+
 # ── global bonuses ─────────────────────────────────────────────────────────────
 def _proj(state, name): return state["projects"].get(name,{}).get("researched",False)
 
@@ -437,8 +449,39 @@ class App:
             self._check = dpg.add_static_texture(
                 width=w, height=h, default_value=flat)
         self._check_size = (w, h)
-        
+        for ore in self.base["ores"].keys():
+            img_path = f"{SCRIPT_DIR}/Images/Ore_{ore}.png"
+            if not os.path.exists(img_path):
+                img_path = f"{SCRIPT_DIR}/Images/Ore_Unknown.png"
+            img = Image.open(img_path).convert("RGBA")
+            w,h = img.size
+            flat = [c / 255.0 for px in img.getdata() for c in px]
+            with dpg.texture_registry():
+                dpg.add_static_texture(
+                        width=w, height=h, default_value=flat, tag=f"Ore_{ore}")
+
+        for alloy in self.base["alloys"].keys():
+            img_path = f"{SCRIPT_DIR}/Images/Alloy_{alloy}.png"
+            if not os.path.exists(img_path):
+                img_path = f"{SCRIPT_DIR}/Images/Alloy_Unknown.png"
+            img = Image.open(img_path).convert("RGBA")
+            w,h = img.size
+            flat = [c / 255.0 for px in img.getdata() for c in px]
+            with dpg.texture_registry():
+                dpg.add_static_texture(
+                        width=w, height=h, default_value=flat, tag=f"Alloy_{alloy}")
            
+        for item in self.base["items"].keys():
+            img_path = f"{SCRIPT_DIR}/Images/Item_{item}.png"
+            if not os.path.exists(img_path):
+                img_path = f"{SCRIPT_DIR}/Images/Item_Unknown.png"
+            img = Image.open(img_path).convert("RGBA")
+            w,h = img.size
+            flat = [c / 255.0 for px in img.getdata() for c in px]
+            with dpg.texture_registry():
+                dpg.add_static_texture(
+                        width=w, height=h, default_value=flat, tag=f"Item_{item}")
+
 
     def _load_chevrons(self):
         """Load Chev-2.png .. Chev4.png as DPG static textures."""
@@ -724,6 +767,10 @@ class App:
         rows.sort(key=lambda r: r.get(sort,0), reverse=True)
         for r in rows:
             with dpg.table_row(parent="dash_tbl"):
+                category = r.get("category")
+                name = r.get("name")
+                img = f"Alloy_{name}" if category == "alloys" else f"Item_{name}"
+                
                 for _, key, _ in self._DCOLS:
                     v = r.get(key,"")
                     if key == "category":
@@ -736,7 +783,12 @@ class App:
                         txt = fmt_time(v); col = C_TEXT
                     else:
                         txt = str(v); col = C_TEXT
-                    dpg.add_text(txt, color=col)
+                    if key == "name":
+                        with dpg.group(horizontal=True):
+                            dpg.add_image(img)
+                            dpg.add_text(txt, color=col)
+                    else:
+                        dpg.add_text(txt, color=col)
 
     # ── ORES ───────────────────────────────────────────────────────────────────
     def _tab_ores(self):
@@ -757,12 +809,15 @@ class App:
             rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
             unl = ore_unlocked(ore, self.base, self.state)
             ors = ore_mining_rate(ore, self.base, self.state)
+            ore_img = f"Ore_{ore}"
             with dpg.table_row(parent="ores_tbl"):
                 if unl:
                     dpg.add_image(self._check)
                 else:
                     dpg.add_text("·", color=C_MUTED)
-                dpg.add_text(ore)
+                with dpg.group(horizontal=True):
+                    dpg.add_image(ore_img)
+                    dpg.add_text(ore)
                 dpg.add_text(fmt(bp), color=C_MUTED)
                 with dpg.group(horizontal=True):
                     self._star_widget(f"ost_{ore}", 
@@ -815,7 +870,9 @@ class App:
                 dpg.add_checkbox(default_value=unl,
                                  user_data=("alloys",name,"unlocked"),
                                  callback=self._cb_unlocked)
-                dpg.add_text(name)
+                with dpg.group(horizontal=True):
+                    dpg.add_image(f"Alloy_{name}")
+                    dpg.add_text(name)
                 dpg.add_text(fmt(bp), color=C_MUTED)
                 dpg.add_text(fmt_time(at), color=C_MUTED)
                 with dpg.group(horizontal=True):
@@ -868,7 +925,9 @@ class App:
                 dpg.add_checkbox(default_value=unl,
                                  user_data=("items",name,"unlocked"),
                                  callback=self._cb_unlocked)
-                dpg.add_text(name)
+                with dpg.group(horizontal=True):
+                    dpg.add_image(f"Item_{name}")
+                    dpg.add_text(name)
                 dpg.add_text(fmt(bp), color=C_MUTED)
                 dpg.add_text(fmt_time(at), color=C_MUTED)
                 with dpg.group(horizontal=True):
@@ -1350,6 +1409,7 @@ class App:
             for w in [
                 28, 105, 45, 27, 210,   # #, Planet, Scope, Owned, Ores
                 58, 72,                 # M.Lvl, Min/s
+                62,                     # Calculated transport speed
                 58, 62,                 # S.Lvl, Spd
                 58, 50,                 # C.Lvl, Crg
                 50, 50, 50,             # Probe: Mng, Spd, Crg
@@ -1441,7 +1501,7 @@ class App:
                 dpg.add_text(lbl, color=C_ACCENT)
             dpg.add_image(self._telescope, width=self._telescope_size[0], height=self._telescope_size[1])
             for lbl in [" ","Ores",
-                         "M.Lvl","Ore/s","S.Lvl","Speed","C.Lvl","Cargo"]:
+                         "M.Lvl","Ore/s","Transport","S.Lvl","Speed","C.Lvl","Cargo"]:
                 dpg.add_text(lbl, color=C_ACCENT)
             for lbl in ["Mng","Spd","Crg","","Mng","Spd","Crg",""]:
                 dpg.add_text(lbl, color=C_MUTED)
@@ -1450,6 +1510,7 @@ class App:
             ps    = self.state["planets"][pid]
             owned = ps["owned"]; lvls = ps["levels"]
             probe = ps["probes"]; colony = ps["colony"]
+            dist = self.base["planets"][pid]["distance"]
             bm = beacon_bonus(pid,"mining",self.base,self.state)
             bs = beacon_bonus(pid,"speed", self.base,self.state)
             bc = beacon_bonus(pid,"cargo", self.base,self.state)
@@ -1491,6 +1552,9 @@ class App:
                             manual_m = float(self.state.get("globals",{}).get("mining",1))
                             if manual_m != 1.0: dpg.add_text(f"Manual:  ×{manual_m:.3f}")
                             dpg.add_text(f"Total:   ×{mb/probe[0]/colony[0]/bm:.3f} global")
+                
+                ts = _planet_transport(dist, sp, cg)
+                dpg.add_text(f"{ts:.1f}", color=C_TEAL)
                 lvl_grp("speed")
                 with dpg.group():
                     dpg.add_text(f"{sp:.2f}" if owned else "—", color=col)
