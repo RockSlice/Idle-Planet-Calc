@@ -20,20 +20,21 @@ STATE_FILE = os.path.join(SCRIPT_DIR, "ipm_state.json")
 PREFS_FILE = os.path.join(SCRIPT_DIR, "ipm_prefs.json")
 
 # ── colours (R,G,B,A 0-255) ───────────────────────────────────────────────────
-C_BG     = (30,  30,  46,  255)
-C_PANEL  = (42,  42,  62,  255)
-C_ACCENT = (124, 106, 247, 255)
-C_TEAL   = (86,  207, 178, 255)
-C_TEXT   = (224, 224, 240, 255)
-C_MUTED  = (136, 136, 153, 255)
-C_GOOD   = (86,  207, 178, 255)
-C_BAD    = (224, 92,  106, 255)
-C_WARN   = (240, 192, 64,  255)
-C_ROW_A  = (37,  37,  56,  255)
-C_ROW_B  = (42,  42,  62,  255)
-C_ENTRY  = (51,  51,  74,  255)
-C_BTN    = (74,  63,  191, 255)
-C_SEP    = (55,  55,  80,  255)
+C_BG      = (30,  30,  46,  255)
+C_PANEL   = (42,  42,  62,  255)
+C_ACCENT  = (124, 106, 247, 255)
+C_TEAL    = (86,  207, 178, 255)
+C_TEXT    = (224, 224, 240, 255)
+C_MUTED   = (136, 136, 153, 255)
+C_GOOD    = (86,  207, 178, 255)
+C_BAD     = (224, 92,  106, 255)
+C_WARN    = (240, 192, 64,  255)
+C_ROW_A   = (37,  37,  56,  255)
+C_ROW_B   = (42,  42,  62,  255)
+C_ENTRY   = (51,  51,  74,  255)
+C_BTN     = (74,  63,  191, 255)
+C_BTN_DIS = (47,  41,  105, 255)
+C_SEP     = (55,  55,  80,  255)
 
 # ── number / time formatting ───────────────────────────────────────────────────
 _SFX = [(1e33,"D"),(1e30,"N"),(1e27,"O"),(1e24,"Sp"),(1e21,"Sx"),
@@ -173,7 +174,7 @@ def _ship_speed(lv: int, bonus: float=1.0) -> float:
 def _ship_cargo(lv: int, bonus: float=1.0) -> int:
     if lv == 0: return 0
     l = lv - 1
-    return round(bonus * (5.0 + 2.0*l + l*l))
+    return round(bonus * (5.0 + 2.0*l + (0.1*(l**2))))
 
 # ── global bonuses ─────────────────────────────────────────────────────────────
 def _proj(state, name): return state["projects"].get(name,{}).get("researched",False)
@@ -602,7 +603,20 @@ class App:
                 dpg.add_theme_style(dpg.mvStyleVar_TabRounding,     4)
                 dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing,     6, 4)
                 dpg.add_theme_style(dpg.mvStyleVar_CellPadding,     4, 3)
+            with dpg.theme_component(dpg.mvButton, enabled_state=False):
+                for col, val in [
+                    (dpg.mvThemeCol_Button,      C_BTN_DIS)
+                ]:
+                    dpg.add_theme_color(col,val)
         dpg.bind_theme(th)
+        
+        with dpg.theme(tag="red_button_theme"):
+            with dpg.theme_component(dpg.mvAll):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (200,0,0))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (200,0,0))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (230,0,0))
+                dpg.add_theme_color(dpg.mvThemeCol_Text, (0,0,0))
+            
 
     def _resize(self, *_):
         w = dpg.get_viewport_client_width()
@@ -731,7 +745,7 @@ class App:
                        borders_innerV=True, borders_outerV=True,
                        scrollY=True, resizable=True,
                        policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
-            for lbl, w in [("✓",28),("Ore",140),("Base $",105),
+            for lbl, w in [("",28),("Ore",140),("Base $",105),
                             ("Stars",80),("Market",90),("Real $",105),("Ore/s",82)]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
@@ -773,7 +787,7 @@ class App:
                        borders_innerV=True, borders_outerV=True,
                        scrollY=True, scrollX=True, resizable=True,
                        policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
-            for lbl, w in [("✓",28),("Alloy",150),("Base $",105),("Time",75),
+            for lbl, w in [("",28),("Alloy",150),("Base $",105),("Time",75),
                             ("Stars",80),("Market",115),("Real $",105),("Recipe",300)]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
@@ -826,7 +840,7 @@ class App:
                        borders_innerV=True, borders_outerV=True,
                        scrollY=True, scrollX=True, resizable=True,
                        policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
-            for lbl, w in [("✓",28),("Item",150),("Base $",105),("Time",75),
+            for lbl, w in [("",28),("Item",150),("Base $",105),("Time",75),
                             ("Stars",80),("Market",115),("Real $",105),("Recipe",300)]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
@@ -884,7 +898,7 @@ class App:
                        borders_innerV=True, borders_outerV=True,
                        scrollY=True, scrollX=True, resizable=True,
                        policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
-            for lbl, w in [("✓",28),("Project",200),("Cost",110),("Time",82),
+            for lbl, w in [("",28),("Project",200),("Cost",110),("Time",82),
                             ("Prereq",170),("Ingredients",380)]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
@@ -1011,7 +1025,7 @@ class App:
             policy=dpg.mvTable_SizingFixedFit, freeze_rows=1,
         ):
             for lbl, w in (
-                [(" ", 81), ("Planet", 150), ("Cost", 110), ("Time", 82)]
+                [(" ", 105), ("Planet", 150), ("Cost", 110), ("Time", 82)]
                 + ing_cols
             ):
                 dpg.add_table_column(label=lbl, width_fixed=True,
@@ -1046,11 +1060,17 @@ class App:
 
             with dpg.table_row(parent="col_tbl"):
                 # Complete button — disabled if no planet selected
-                dpg.add_button(
-                    label="Complete",
-                    enabled=has_planet,
-                    user_data=orig_idx,
-                    callback=self._cb_col_complete)
+                with dpg.group(horizontal=True):
+                    dpg.add_button(
+                        label="Complete",
+                        enabled=has_planet,
+                        user_data=orig_idx,
+                        callback=self._cb_col_complete)
+                    x_button = dpg.add_button(
+                        label="X",
+                        user_data=orig_idx,
+                        callback=self._cb_col_cancel)
+                    dpg.bind_item_theme(x_button, "red_button_theme")
 
                 # Planet dropdown
                 dpg.add_combo(
@@ -1124,6 +1144,15 @@ class App:
             save_state(self.state)
             self._refresh_colonies()
 
+    def _cb_col_cancel(self, s, v, ud):
+        orig_idx = ud
+        self.state["colonies"].pop(orig_idx)
+        save_state(self.state)
+        self._refresh_colonies()
+        self._refresh_planets()
+        self._refresh_dashboard()
+        
+        
     def _cb_col_complete(self, s, v, ud):
         orig_idx = ud
         row = self.state["colonies"][orig_idx]
@@ -1320,9 +1349,9 @@ class App:
             # 19 columns: 11 main + 3 probe + 3 colony + 2 separator
             for w in [
                 28, 105, 45, 27, 210,   # #, Planet, Scope, Owned, Ores
-                80, 72,                 # M.Lvl, Min/s
-                80, 62,                 # S.Lvl, Spd
-                80, 50,                 # C.Lvl, Crg
+                58, 72,                 # M.Lvl, Min/s
+                58, 62,                 # S.Lvl, Spd
+                58, 50,                 # C.Lvl, Crg
                 50, 50, 50,             # Probe: Mng, Spd, Crg
                 5,
                 50, 50, 50,             # Colony: Mng, Spd, Crg
@@ -1359,6 +1388,13 @@ class App:
         pid, stat, delta = ud
         cur = self.state["planets"][pid]["levels"][stat]
         self.state["planets"][pid]["levels"][stat] = max(1, cur+delta)
+        save_state(self.state)
+        self._refresh_planets()
+        self._refresh_dashboard()
+
+    def _cb_planet_lvl_edit(self, s, v, ud):
+        pid, stat = ud
+        self.state["planets"][pid]["levels"][stat] = max(1, int(v))
         save_state(self.state)
         self._refresh_planets()
         self._refresh_dashboard()
@@ -1428,8 +1464,7 @@ class App:
             def lvl_grp(stat):
                 with dpg.group(horizontal=True):
                     if owned:
-                        dpg.add_button(label="-",width=16,user_data=(pid,stat,-1),callback=self._cb_planet_lvl)
-                        dpg.add_input_text(default_value=str(lvls[stat]), readonly=True, width=34)
+                        dpg.add_input_text(default_value=int(lvls[stat]), on_enter=True, width=34, user_data=(pid,stat),callback=self._cb_planet_lvl_edit)
                         dpg.add_button(label="+",width=16,user_data=(pid,stat,1), callback=self._cb_planet_lvl)
                     else:
                         dpg.add_text("—", color=C_MUTED)
@@ -1443,7 +1478,7 @@ class App:
                 dpg.add_text(ores, color=col)
                 lvl_grp("mining")
                 with dpg.group():
-                    dpg.add_text(f"{mr:.3f}" if owned else "—", color=col)
+                    dpg.add_text(f"{mr:.2f}" if owned else "—", color=col)
                     if owned:
                         with dpg.tooltip(dpg.last_item()):
                             base_mr = _mining_rate(lvls["mining"])
