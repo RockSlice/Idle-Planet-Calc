@@ -290,7 +290,7 @@ def manager_secondary_bonus(stat: str, state: dict) -> float:
         if mgr.get("secondary") == stat:
             stars = max(1, min(7, mgr.get("stars", 1)))
             total = total * (_MGR_SECONDARY.get(stat, [0.0]*7)[stars - 1])
-    return 1.0 + total
+    return total
 
 # ── time helpers ───────────────────────────────────────────────────────────────
 def total_smelt_time(name, cat, base, state):
@@ -1118,7 +1118,7 @@ class App:
     def _mgr_secondary_display(self, secondary, stars):
         add = self._mgr_secondary_mult(secondary, stars)
         if secondary == "none" or stars < 3: return "—"
-        return f"x{1.0 + add:.2f}"
+        return f"x{add:.2f}"
 
     def _tab_managers(self):
         with dpg.group(horizontal=True):
@@ -1131,8 +1131,8 @@ class App:
             policy=dpg.mvTable_SizingFixedFit, freeze_rows=1,
         ):
             for lbl, w in [
-                ("",18), ("Name",140), ("Planet",150), ("Stars",225),
-                ("Primary",115), ("",80), ("Secondary",130), ("",80),
+                ("",18), ("Name",140), ("Planet",135), ("Stars",175),
+                ("Primary",120), ("",80), ("Secondary",155), ("",80),
             ]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
@@ -1164,7 +1164,7 @@ class App:
                                    tag=f"mgr_name_{idx}", user_data=idx,
                                    on_enter=True, callback=self._cb_mgr_name)
                 dpg.add_combo(items=planet_opts, default_value=planet_display,
-                              width=145, user_data=idx,
+                              width=130, user_data=idx,
                               callback=self._cb_mgr_planet)
                 # 7 star images
                 with dpg.group(horizontal=True):
@@ -1180,12 +1180,12 @@ class App:
                         
                 dpg.add_combo(items=self._PRIMARY_OPTS,
                               default_value=self._mgr_primary_label(primary),
-                              width=110, user_data=idx,
+                              width=120, user_data=idx,
                               callback=self._cb_mgr_primary)
                 dpg.add_text(f"x{pri_mult:.2f}", color=C_TEAL, tag=f"mgr_pri_eff_{idx}")
                 dpg.add_combo(items=self._SECONDARY_OPTS,
                               default_value=self._mgr_secondary_label(secondary),
-                              width=125, user_data=idx,
+                              width=155, user_data=idx,
                               callback=self._cb_mgr_secondary)
                 dpg.add_text(sec_disp,
                              color=C_TEAL if sec_disp != "—" else C_MUTED,
