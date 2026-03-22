@@ -463,7 +463,7 @@ class App:
         except Exception as e:
             print(f"[warn] Could not load noStar.png: {e}")
         
-        for img_name in ["star_white", "star_black"]:
+        for img_name in ["star_white", "star_black", "Arrow_up", "Arrow_down"]:
             img_path = f"{SCRIPT_DIR}/Images/{img_name}.png"
             if os.path.exists(img_path):
                 img = Image.open(img_path).convert("RGBA")
@@ -703,6 +703,8 @@ class App:
                 dpg.add_theme_style(dpg.mvStyleVar_TabRounding,     4)
                 dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing,     6, 4)
                 dpg.add_theme_style(dpg.mvStyleVar_CellPadding,     4, 3)
+            with dpg.theme_component(dpg.mvImageButton, enabled_state=False):
+                dpg.add_theme_color(dpg.mvThemeCol_Button,C_BTN_DIS)
             with dpg.theme_component(dpg.mvButton, enabled_state=False):
                 for col, val in [
                     (dpg.mvThemeCol_Button,      C_BTN_DIS)
@@ -1131,7 +1133,7 @@ class App:
             policy=dpg.mvTable_SizingFixedFit, freeze_rows=1,
         ):
             for lbl, w in [
-                ("",18), ("Name",140), ("Planet",135), ("Stars",175),
+                ("",85), ("Name",140), ("Planet",135), ("Stars",175),
                 ("Primary",120), ("",80), ("Secondary",155), ("",80),
             ]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
@@ -1144,6 +1146,7 @@ class App:
             for pid, ps in sorted(self.state["planets"].items(), key=lambda x: int(x[0]))
             if ps["owned"]
         ]
+        max_idx = len(managers) - 1
         for idx, mgr in enumerate(managers):
             name      = mgr.get("name", f"Manager {idx+1}")
             planet    = mgr.get("planet", "")
@@ -1156,8 +1159,17 @@ class App:
             sec_disp = self._mgr_secondary_display(secondary, stars)
 
             with dpg.table_row(parent="mgr_tbl"):
-                x_button = dpg.add_button(label="X", 
-                               user_data=idx, callback=self._cb_mgr_delete)
+                with dpg.group(horizontal=True):
+                    x_button = dpg.add_button(label="X", 
+                                   user_data=idx, callback=self._cb_mgr_delete)
+                    dpg.add_image_button(texture_tag="Arrow_up",
+                                         width=17, height=20,
+                                         enabled=idx > 0,                                         
+                                         user_data=(idx, -1), callback=self._cb_mgr_move)
+                    dpg.add_image_button(texture_tag="Arrow_down", 
+                                         width=17, height=20,                    
+                                         enabled=idx < max_idx,                                         
+                                         user_data=(idx, 1), callback=self._cb_mgr_move)
                 dpg.bind_item_theme(x_button, "red_button_theme")
                 
                 dpg.add_input_text(default_value=name, width=135,
@@ -1172,7 +1184,7 @@ class App:
                         tex = "star_white" if si <= stars else "star_black"
                         dpg.add_image_button(
                             texture_tag=tex,
-                            width=20, height=20,
+                            width=19, height=19,
                             tag=f"mgr_star_{idx}_{si}",
                             user_data=(idx, si),
                             callback=self._cb_mgr_star_click)
@@ -1205,6 +1217,16 @@ class App:
         })
         save_state(self.state)
         self._refresh_managers()
+    
+    def _cb_mgr_move(self, s, v, ud):
+        idx, d = ud
+        swap_idx = idx + d
+        mgrs = self.state.get("managers", [])
+        mgrs[idx], mgrs[swap_idx] = mgrs[swap_idx], mgrs[idx]
+        self.state["managers"] = mgrs
+        save_state(self.state)
+        self._refresh_managers()
+        
 
     def _cb_mgr_delete(self, s, v, ud):
         mgrs = self.state.get("managers", [])
@@ -2087,6 +2109,11 @@ class App:
             # Copy over states that don't get reset
             for cat in ("globals", "beacons", "rooms"):
                 new_state[cat] = self.state[cat].copy()
+                
+            # Copy managers over (without planet assignments)
+            for mgr in self.state["managers"]:
+                mgr["planet"] = ""
+                new_state["managers"].append(mgr.copy())
             
             self.state = copy.deepcopy(new_state)
             save_state(self.state)
