@@ -283,7 +283,7 @@ def manager_secondary_bonus(stat: str, state: dict) -> float:
     Only managers with a planet assigned contribute.
     Returns a multiplier: 1.0 + sum of individual additive bonuses.
     """
-    total = 0.0
+    total = 1
     for mgr in state.get("managers", []):
         if not mgr.get("planet"):
             continue
@@ -1691,7 +1691,55 @@ class App:
                 210,                    # Ores
             ]:
                 dpg.add_table_column(label="", width_fixed=True, init_width_or_weight=w)
+        
+        # Build table with initial blank values
+        with dpg.table_row(parent="planet_tbl"):
+            for lbl in ["","","","","","","","","","","",""]:
+                dpg.add_text(lbl, color=C_ACCENT)
+            # columns 11-13: "Probes" spanning — place in col 11, overflow right
 
+            dpg.add_text("<----", color=C_TEAL)
+            dpg.add_text("Probes", color=C_TEAL)
+            dpg.add_text("---->", color=C_TEAL)  
+            dpg.add_text() #Divider
+            # columns 14-16: "Colony" spanning
+            dpg.add_text("<----", color=C_TEAL)
+            dpg.add_text("Colony", color=C_TEAL)
+            dpg.add_text("---->", color=C_TEAL) 
+            dpg.add_text() #Divider
+            dpg.add_text("")
+            
+        # ── header row 2: sub-column labels ──────────────────────────────────
+        with dpg.table_row(parent="planet_tbl"):
+            # columns 0-10: plain labels, no group heading
+            for lbl in ["#","Planet"]:
+                dpg.add_text(lbl, color=C_ACCENT)
+            dpg.add_image(self._telescope, width=self._telescope_size[0], height=self._telescope_size[1])
+            for lbl in [" ","Manager",
+                         "M.Lvl","Ore/s","Transport","S.Lvl","Speed","C.Lvl","Cargo"]:
+                dpg.add_text(lbl, color=C_ACCENT)
+            for lbl in ["Mng","Spd","Crg","","Mng","Spd","Crg",""]:
+                dpg.add_text(lbl, color=C_MUTED)
+            dpg.add_text("Ores", color=C_ACCENT)
+            
+        for pid, bd in sorted(self.base["planets"].items(), key=lambda x:int(x[0])):
+            scope = str(bd["telescope"]) if bd["telescope"] else "—"
+            col = (85,85,112,255)
+            with dpg.table_row(parent="planet_tbl"):
+                dpg.add_text(pid, color=col)
+                dpg.add_text(bd["name"], color=col)
+                dpg.add_text(scope, color=C_MUTED)
+                dpg.add_checkbox(default_value=False,
+                                 user_data=pid,
+                                 callback=self._cb_planet_owned, 
+                                 tag=f"plt_owned_{pid}")
+                dpg.add_combo(items=[],
+                              width=135,
+                              user_data=pid,
+                              enabled=False,
+                              callback=self._cb_planet_manager,
+                              tag=f"plt_mgr_{pid}")
+                                 
     def _cb_planet_global(self, s, v, ud):
         key = ud
         try: val = max(0.01, float(v))
