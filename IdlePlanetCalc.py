@@ -177,13 +177,15 @@ def _ship_cargo(lv: int, bonus: float=1.0) -> int:
     l = lv - 1
     return round(bonus * (5.0 + 2.0*l + (0.1*(l**2))))
 
-def _planet_transport(dist: int, speed: float, cargo: int):
-    # dist is in Mkm times some factor - pulled from wiki (probably guesses)
+def _planet_transport(dist: int, speed: float, cargo: int) -> float:
+    # dist is in Mkm
     # speed is in Mkm/h
+    # cargo is in ore
+    # transport is in ore/s
     if speed == 0:
         return 0
     dist = dist * 2 # account for return trip
-    Mkps = speed * 3
+    Mkps = 1000 * speed / 3.6
     
     # return cargo per second
     transport = cargo * (Mkps / dist)
@@ -735,6 +737,10 @@ class App:
                 dpg.add_theme_style(dpg.mvStyleVar_TabRounding,     0)
                 dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing,     0, 0)
                 dpg.add_theme_style(dpg.mvStyleVar_CellPadding,     0, 0)
+                
+        with dpg.theme(tag="muted_input_text"):
+            with dpg.theme_component(dpg.mvInputText):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, C_MUTED)
             
 
     def _resize(self, *_):
@@ -1895,7 +1901,11 @@ class App:
                 dpg.add_combo(items=mgr_names, default_value=cur_mgr,
                               width=135, user_data=pid, enabled=owned,
                               callback=self._cb_planet_manager)
+                              
+                # "M.Lvl" column
                 lvl_grp("mining")
+                
+                # "Ore/s" column
                 with dpg.group():
                     dpg.add_text(f"{mr:.2f}" if owned else "—", color=col)
                     if owned:
@@ -1914,7 +1924,7 @@ class App:
                             if msec_m != 1.0: dpg.add_text(f"Mgr Sec: ×{msec_m:.3f} (global)")
                 
                 ts = _planet_transport(dist, sp, cg)
-                dpg.add_text(f"{ts:.1f}", color=C_TEAL)
+                dpg.add_text(f"{ts:.1f}", color=C_TEAL if ts > mr else C_WARN)
                 lvl_grp("speed")
                 with dpg.group():
                     dpg.add_text(f"{sp:.2f}" if owned else "—", color=col)
@@ -1951,17 +1961,25 @@ class App:
                             if msec_c != 1.0: dpg.add_text(f"Mgr Sec: ×{msec_c:.3f} (global)")
                 # Probe bonuses (cols 11-13)
                 for idx in range(3):
-                    dpg.add_input_text(default_value=str(probe[idx]),width=52,
+                    probe_input = dpg.add_input_text(default_value=f"{probe[idx]:.2f}",width=52,
                                        on_enter=True,
                                        user_data=(pid,"probes",idx),
                                        callback=self._cb_planet_bonus_val)
+                    if probe[idx] == 1:
+                        dpg.bind_item_theme(probe_input, "muted_input_text")
+                                       
+                                       
+                                    
                 dpg.add_text()
                 # Colony bonuses (cols 14-16)
                 for idx in range(3):
-                    dpg.add_input_text(default_value=str(colony[idx]),width=52,
+                    colony_input = dpg.add_input_text(default_value=str(colony[idx]),width=52,
                                        on_enter=True,
                                        user_data=(pid,"colony",idx),
                                        callback=self._cb_planet_bonus_val)
+                    if colony[idx] == 1:
+                        dpg.bind_item_theme(colony_input, "muted_input_text")
+                    
                 dpg.add_text("")
                 dpg.add_text(ores, color=col)
         
