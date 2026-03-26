@@ -10,7 +10,6 @@ Files (all in same folder as this script):
 
 import json, os, re, copy
 import dearpygui.dearpygui as dpg
-import copy
 from PIL import Image
 
 # ── paths ─────────────────────────────────────────────────────────────────────
@@ -152,7 +151,7 @@ def ore_unlocked(ore: str, base: dict, state: dict) -> bool:
 
 def ore_mining_rate(ore: str, base: dict, state: dict) -> float:
     total = 0.0
-    gm    = global_mining_bonus(state)
+    gm    = global_bonuses["mining"]
     for pid, ps in state["planets"].items():
         if not ps["owned"]: continue
         pct = base["planets"][pid]["resources"].get(ore, 0)
@@ -163,6 +162,7 @@ def ore_mining_rate(ore: str, base: dict, state: dict) -> float:
     return total
 
 def _mining_rate(lv: int, bonus: float=1.0) -> float:
+    # bonus input: excludes global bonuses
     if lv == 0: return 0.0
     l = lv - 1
     return bonus * (0.25 + 0.1*l + 0.017*l*l)
@@ -191,11 +191,109 @@ def _planet_transport(dist: int, speed: float, cargo: int) -> float:
     transport = cargo * (Mkps / dist)
     return transport
 
-# ── global bonuses ─────────────────────────────────────────────────────────────
 def _proj(state, name): return state["projects"].get(name,{}).get("researched",False)
+
+
+# ── global bonuses ─────────────────────────────────────────────────────────────
+# alloy_and_item_val: Alloy and Item Value
+# ast_val:            Asteroid Value
+# deb_val:            Debris Value
+# ast_and_deb_val:    Asteroid & Debris Value
+# cargo:              Cargo size
+# cash_windfall:      Cash Windfall
+# col_cost:           Colonization Cost (reduction)
+# colonizing_bonus:   Colonizing bonuses
+# craft_cost:         Crafting cost (reduction)
+# craft_speed:        Crafting Speed
+# credits:            Credits
+# manager_bonus:      Manager bonuses
+# manager_sec_bonus:  Manager secondary bonuses
+# market_bonus:       Market bonuses
+# mining:             Mining rate
+# pla_upg_price:      Planet Upgrades Price (reduction)
+# prod_boost_speed:   Production Boost speed
+# prod_boost_dur:     Production Boost duration
+# rov_scan_time:      Rover Scan Time
+# speed:              Ship Speed
+# smelt_speed:        Smelt Speed
 
 # Module-level base reference set by App.__init__ so room_bonus can use it
 _g_base = {}
+global_bonuses = {
+    "alloy_val": 1,
+    "item_val": 1,
+    "alloy_and_item_val": 1,
+    "ast_val": 1,
+    "deb_val": 1,
+    "ast_and_deb_val": 1,
+    "cargo": 1,       
+    "cash_windfall": 1,
+    "col_cost": 1,
+    "colonizing_bonus": 1,
+    "craft_speed": 1,
+    "craft_cost": 1,
+    "credits": 1,         
+    "item_val": 1,         
+    "manager_bonus": 1,  
+    "manager_sec_bonus": 1,  
+    "market_bonus": 1, 
+    "mining": 1,    
+    "pla_upg_price": 1,
+    "prod_boost_speed": 1,
+    "prod_boost_dur": 1,
+    "rov_scan_time": 1, 
+    "speed": 1,          
+    "smelt_speed": 1    
+}
+
+def calculate_global_bonuses(base, state):
+    global global_bonuses
+    #print("Calculating Global Bonuses")
+    # reset bonuses to 1
+    for bonus in global_bonuses:
+        global_bonuses[bonus] = 1
+        
+    for proj_name in state["projects"]:
+        if _proj(state,proj_name):
+            if "boost" in base["projects"][proj_name]:
+                debug_str = f"  Project {proj_name}"
+                bn = base["projects"][proj_name]["boost"]
+                v = base["projects"][proj_name]["boost_val"]
+                global_bonuses[bn] *= v
+                debug_str += f": Multiplying bonus '{bn}' by {v}"
+                #print(debug_str)
+                
+    for room in base.get("rooms",[]):
+        n = room["name"]
+        level = state.get("rooms",{}).get(n,0)
+        if level == 0:
+            continue
+        stat = room["stat"]
+        be = room["base_effect"]
+        pl = room["per_level"]
+        if stat:
+            v = be + (pl * (level - 1))
+            global_bonuses[stat] *= v
+            debug_str = f"  Room '{room['name']}': Multiplying bonus '{stat}' by {v}"
+            #print(debug_str)
+    # include manual adjustments
+    for stat, m in state.get("globals",{}).items():
+        global_bonuses[stat] *= m
+        debug_str = f"  Manual Adjustment: Multiplying bonus '{stat}' by {m}"
+        #print(debug_str)
+    
+    # Manager bonus
+    for stat in ("mining", "speed", "cargo", "craft_speed","smelt_speed"):
+        m = manager_secondary_bonus(stat, state)
+        global_bonuses[stat] *= m
+        debug_str = f"  Active Managers: Multiplying bonus '{stat}' by {m}"
+        #print(debug_str)
+    
+    # debug output
+    #for bonus, m in global_bonuses.items():
+    #    print(f"{bonus}: {m:.2f}")
+        
+                
 
 def global_mining_bonus(state):
     v = float(state.get("globals",{}).get("mining",1))
@@ -281,9 +379,9 @@ def manager_primary_bonus(pid: str, stat: str, state: dict) -> float:
     return 1.0
 
 def manager_secondary_bonus(stat: str, state: dict) -> float:
-    """Combined additive secondary bonus across all ASSIGNED managers for stat.
+    """Combined cumulative secondary bonus across all ASSIGNED managers for stat.
     Only managers with a planet assigned contribute.
-    Returns a multiplier: 1.0 + sum of individual additive bonuses.
+    Returns a multiplier: product of individual bonuses.
     """
     total = 1
     for mgr in state.get("managers", []):
@@ -761,9 +859,9 @@ class App:
             dpg.add_button(label="Sell Galaxy",    callback=self._cb_sell_galaxy)
 
     # ── helpers: bonus entry strip ────────────────────────────────────────────
-    def _bonus_strip(self, key, label, fn_comp, tag_comp, tag_manual, cb):
+    def _bonus_strip(self, key, label, tag_comp, tag_manual, cb):
         dpg.add_text(f"{label}:", color=C_MUTED)
-        dpg.add_text(f"×{fn_comp(self.state):.3f}", color=C_TEAL, tag=tag_comp)
+        dpg.add_text(f"×{global_bonuses[key]:.3f}", color=C_TEAL, tag=tag_comp)
         dpg.add_text(" Manual:", color=C_MUTED)
         dpg.add_input_text(default_value=str(self.state["globals"][key]),
                            width=58, tag=tag_manual, on_enter=True,
@@ -917,7 +1015,7 @@ class App:
     # ── ALLOYS ─────────────────────────────────────────────────────────────────
     def _tab_alloys(self):
         with dpg.group(horizontal=True):
-            self._bonus_strip("smelt_speed","Smelt Speed",global_smelt_speed,
+            self._bonus_strip("smelt_speed","Smelt Speed",
                               "alc_comp","alc_man",self._cb_smelt_speed)
         with dpg.table(tag="alloys_tbl", header_row=True, row_background=True,
                        borders_innerH=True, borders_outerH=True,
@@ -935,7 +1033,7 @@ class App:
         dpg.set_value("alc_comp", f"×{val:.3f}")
         dpg.set_value("alc_man",  str(val))
         save_state(self.state)
-        self._refresh_alloys(); self._refresh_dashboard()
+        self._refresh_all()
 
     def _refresh_alloys(self):
         dpg.delete_item("alloys_tbl", children_only=True, slot=1)
@@ -972,7 +1070,7 @@ class App:
     # ── ITEMS ──────────────────────────────────────────────────────────────────
     def _tab_items(self):
         with dpg.group(horizontal=True):
-            self._bonus_strip("craft_speed","Craft Speed",global_craft_speed,
+            self._bonus_strip("craft_speed","Craft Speed",
                               "itc_comp","itc_man",self._cb_craft_speed)
         with dpg.table(tag="items_tbl", header_row=True, row_background=True,
                        borders_innerH=True, borders_outerH=True,
@@ -990,7 +1088,7 @@ class App:
         dpg.set_value("itc_comp", f"×{val:.3f}")
         dpg.set_value("itc_man",  str(val))
         save_state(self.state)
-        self._refresh_items(); self._refresh_dashboard()
+        self._refresh_all()
 
     def _refresh_items(self):
         dpg.delete_item("items_tbl", children_only=True, slot=1)
@@ -1075,23 +1173,35 @@ class App:
                     st2 += total_smelt_time(i,c2,self.base,self.state)*q
                     ct2 += total_craft_time(i,c2,self.base,self.state)*q
             wt  = wall_time(st2,ct2,sm,cr)
+            if wt == 1:
+                # No smelting - ore-only recipe
+                wt = 0
+                for i,q in rec.items():
+                    ors = ore_mining_rate(i, self.base, self.state)
+                    if ors > 0:
+                        wt += q/ors
             pre_str = (" OR ".join(pre) if isinstance(pre,list) else pre) or "—"
             rec_str = ", ".join(f"{q:g}×{i}" for i,q in rec.items())
             col = C_TEAL if done else ((85,85,112,255) if not met else C_TEXT)
             with dpg.table_row(parent="proj_tbl"):
+                # col: Researched
                 dpg.add_checkbox(default_value=done, user_data=name,
                                  callback=self._cb_proj_check)
+                # col: Project
                 dpg.add_text(name,    color=col)
+                # col: Cost
                 dpg.add_text(fmt(cost),color=col)
-                dpg.add_text(fmt_time(wt), color=col)
+                # col: Time
+                dpg.add_text(fmt_time(wt) if wt > 0 else "—", color=col)
+                # col: Prereq
                 dpg.add_text(pre_str, color=col)
+                # col: Ingredients
                 dpg.add_text(rec_str, color=col)
 
     def _cb_proj_check(self, s, v, ud):
         self.state["projects"][ud]["researched"] = v
         save_state(self.state)
-        self._refresh_projects()
-        self._refresh_dashboard()
+        self._refresh_all()
 
 
 
@@ -1181,6 +1291,7 @@ class App:
                 dpg.add_input_text(default_value=name, width=135,
                                    tag=f"mgr_name_{idx}", user_data=idx,
                                    on_enter=True, callback=self._cb_mgr_name)
+                # Planet Column
                 dpg.add_combo(items=planet_opts, default_value=planet_display,
                               width=130, user_data=idx,
                               callback=self._cb_mgr_planet)
@@ -1250,9 +1361,7 @@ class App:
         pid = v.split(":")[0].strip() if v else ""
         self._mgr_assign_planet(ud, pid)
         save_state(self.state)
-        self._refresh_managers()
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_mgr_star_click(self, s, v, ud):
         idx, si = ud
@@ -1292,8 +1401,7 @@ class App:
         if dpg.does_item_exist(f"mgr_sec_eff_{ud}"):
             dpg.set_value(f"mgr_sec_eff_{ud}", sec_disp)
         save_state(self.state)
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_planet_manager(self, s, v, ud):
         pid = ud
@@ -1307,9 +1415,7 @@ class App:
                     self._mgr_assign_planet(i, pid)
                     break
         save_state(self.state)
-        self._refresh_managers()
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     # ── COLONIES ───────────────────────────────────────────────────────────────
     # Colony rows are stored in state["colonies"] as a list of dicts:
@@ -1693,12 +1799,12 @@ class App:
     # ── PLANETS ────────────────────────────────────────────────────────────────
     def _tab_planets(self):
         with dpg.group(horizontal=True):
-            for key, label, fn, tc, tm in [
-                ("mining","Mining Rate",global_mining_bonus,"gmc","gmm"),
-                ("speed", "Ship Speed", global_speed_bonus, "gsc","gsm"),
-                ("cargo", "Ship Cargo", global_cargo_bonus, "gcc","gcm"),
+            for key, label, tc, tm in [
+                ("mining","Mining Rate","gmc","gmm"),
+                ("speed", "Ship Speed", "gsc","gsm"),
+                ("cargo", "Ship Cargo", "gcc","gcm"),
             ]:
-                self._bonus_strip(key, label, fn, tc, tm, self._cb_planet_global)
+                self._bonus_strip(key, label, tc, tm, self._cb_planet_global)
         with dpg.table(tag="planet_tbl", header_row=False, row_background=True,
                        borders_innerH=True, borders_outerH=True,
                        borders_innerV=True, borders_outerV=True,
@@ -1773,13 +1879,12 @@ class App:
         try: val = max(0.01, float(v))
         except: return
         self.state["globals"][key] = val
-        fn_map = {"mining":global_mining_bonus,"speed":global_speed_bonus,"cargo":global_cargo_bonus}
         tc_map = {"mining":"gmc","speed":"gsc","cargo":"gcc"}
         tm_map = {"mining":"gmm","speed":"gsm","cargo":"gcm"}
-        dpg.set_value(tc_map[key], f"×{fn_map[key](self.state):.3f}")
+        dpg.set_value(tc_map[key], f"×{global_bonuses[key]:.3f}")
         dpg.set_value(tm_map[key], str(val))
         save_state(self.state)
-        self._refresh_planets()
+        self._refresh_all()
 
     def _cb_planet_owned(self, s, v, ud):
         pid = ud
@@ -1822,12 +1927,12 @@ class App:
         scroll_y = dpg.get_y_scroll("planet_tbl")
         
         dpg.delete_item("planet_tbl", children_only=True, slot=1)
-        gm=global_mining_bonus(self.state); gs=global_speed_bonus(self.state); gc=global_cargo_bonus(self.state)
+        gm=global_bonuses["mining"]; gs=global_speed_bonus(self.state); gc=global_cargo_bonus(self.state)
         # update bonus comp labels
-        for tc, fn, key in [("gmc",global_mining_bonus,"mining"),
-                             ("gsc",global_speed_bonus,"speed"),
-                             ("gcc",global_cargo_bonus,"cargo")]:
-            dpg.set_value(tc, f"×{fn(self.state):.3f}")
+        for tc, key in [("gmc","mining"),
+                             ("gsc","speed"),
+                             ("gcc","cargo")]:
+            dpg.set_value(tc, f"×{global_bonuses[key]:.3f}")
 
         # ── header row 1: group span labels ──────────────────────────────────
         with dpg.table_row(parent="planet_tbl"):
@@ -2237,10 +2342,7 @@ class App:
         save_state(self.state)
         self._refresh_rooms()
         # Rooms affect global bonuses — refresh everything that uses them
-        self._refresh_planets()
-        self._refresh_alloys()
-        self._refresh_items()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_room_level_inc(self, s, v, ud):
         name, delta = ud
@@ -2256,10 +2358,7 @@ class App:
         if dpg.does_item_exist(f"room_ef_{name}"):
             dpg.set_value(f"room_ef_{name}", self._room_effect_str(room, new_lv))
         save_state(self.state)
-        self._refresh_planets()
-        self._refresh_alloys()
-        self._refresh_items()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_room_level_edit(self, s, v, ud):
         name = ud
@@ -2272,12 +2371,10 @@ class App:
         if dpg.does_item_exist(f"room_ef_{name}"):
             dpg.set_value(f"room_ef_{name}", self._room_effect_str(room, new_lv))
         save_state(self.state)
-        self._refresh_planets()
-        self._refresh_alloys()
-        self._refresh_items()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _refresh_all(self):
+        calculate_global_bonuses(self.base, self.state)
         self._refresh_ores()
         self._refresh_alloys()
         self._refresh_items()
