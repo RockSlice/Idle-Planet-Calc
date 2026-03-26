@@ -114,8 +114,12 @@ def save_state(state: dict):
         json.dump(state, f, indent=2)
 
 # ── prefs ──────────────────────────────────────────────────────────────────────
-_DEF_PREFS = {"dashboard_filter":"All","dashboard_sort":"vps_profit_ore",
-              "projects_sort":"time", "colonies_sort":"planet",
+_DEF_PREFS = {"dashboard_filter":"All",
+              "dashboard_sort":"vps_profit_ore",
+              "projects_sort":"time",
+              "projects_show_r":True,
+              "projects_show_locked":True,
+              "colonies_sort":"planet",
               "beacons_sort":"level"}
 
 def load_prefs() -> dict:
@@ -1124,6 +1128,7 @@ class App:
 
     # ── PROJECTS ───────────────────────────────────────────────────────────────
     def _tab_projects(self):
+        
         with dpg.group(horizontal=True):
             dpg.add_text("Sort:", color=C_MUTED)
             dpg.add_radio_button(items=["name","cost","time"],
@@ -1132,6 +1137,13 @@ class App:
                                  callback=lambda s,v: (self.prefs.update({"projects_sort":v}),
                                                         save_prefs(self.prefs),
                                                         self._refresh_projects()))
+            dpg.add_spacer(width=30)
+            dpg.add_checkbox(label="Show Researched",
+                             default_value=self.prefs["projects_show_r"],
+                             callback=self._show_researched)
+            dpg.add_checkbox(label="Show Locked",
+                             default_value=self.prefs["projects_show_locked"],
+                             callback=self._show_locked)
         with dpg.table(tag="proj_tbl", header_row=True, row_background=True,
                        borders_innerH=True, borders_outerH=True,
                        borders_innerV=True, borders_outerV=True,
@@ -1164,7 +1176,11 @@ class App:
         for name, bd in sorted(self.base["projects"].items(), key=sk):
             rec = bd["recipe"]; pre = bd.get("prereq","")
             met  = prereq_met(pre, self.state)
+            if not met and not self.prefs["projects_show_locked"]:
+                continue
             done = self.state["projects"].get(name,{}).get("researched",False)
+            if done and not self.prefs["projects_show_r"]:
+                continue
             cost = sum(effective_price(i,self.base,self.state)*q for i,q in rec.items())
             st2=0; ct2=0
             for i,q in rec.items():
@@ -1202,7 +1218,17 @@ class App:
         self.state["projects"][ud]["researched"] = v
         save_state(self.state)
         self._refresh_all()
-
+    
+    def _show_researched(self, s, v):
+        self.prefs["projects_show_r"] = v
+        save_prefs(self.prefs)
+        self._refresh_all()
+        
+    def _show_locked(self, s, v):
+        self.prefs["projects_show_locked"] = v
+        save_prefs(self.prefs)
+        self._refresh_all()
+        
 
 
     # ── MANAGERS ───────────────────────────────────────────────────────────────
