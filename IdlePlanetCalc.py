@@ -459,6 +459,40 @@ def analyze_all(base, state):
     for n in base["alloys"]: r.append(analyze(n,"alloys",base,state))
     for n in base["items"]:  r.append(analyze(n,"items", base,state))
     return r
+    
+def get_vps(pid: str, state, base) -> float:
+    bd = base["planets"][pid]
+    ps = state["planets"][pid]
+    lvl = ps["levels"]["mining"]
+    probe = ps["probes"]
+    colony = ps["colony"]
+    bm = beacon_bonus(pid,"mining",base,state)
+    mm = manager_primary_bonus(pid,"mining",state)
+    gm=global_bonuses["mining"]
+    mb = probe[0]*colony[0]*bm*mm*gm
+    mr = _mining_rate(lvl,mb)
+    vps = 0
+    for o,p in bd["resources"].items():
+        ore_state = state["ores"][o]
+        mkt = ore_state.get("market",0)
+        stars = ore_state.get("stars",0)
+        bp = base["ores"][o]["base_price"]
+        rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
+        vps += rp * mr * p / 100
+    return vps
+
+
+def get_next_vps_per(pid: str, level: int, vps: float, base) -> float:
+    bp = base["planets"][pid]["base_price"]
+    l1 = level - 1
+    l2 = level - 2
+    if level == 0:
+        next_cost = bp
+    else:
+        next_cost = (bp/20) * (1.3**(l1))
+    
+    next_vps = vps * (0.25 + 0.1*l1 + 0.017*(l1**2))/(0.25 + 0.1*l2 + 0.017*(l2**2))
+    return next_vps / next_cost
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Application
@@ -833,6 +867,7 @@ class App:
                 dpg.add_theme_color(dpg.mvThemeCol_Button, (0,0,0,0))
                 dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (0,0,0,0))
                 dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (0,0,0,0))
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBg, (0,0,0,0))
                 dpg.add_theme_style(dpg.mvStyleVar_FrameRounding,  0)
                 dpg.add_theme_style(dpg.mvStyleVar_FramePadding,  0, 5)
                 dpg.add_theme_style(dpg.mvStyleVar_WindowRounding,  0)
@@ -843,6 +878,12 @@ class App:
         with dpg.theme(tag="muted_input_text"):
             with dpg.theme_component(dpg.mvInputText):
                 dpg.add_theme_color(dpg.mvThemeCol_Text, C_MUTED)
+                
+        with dpg.theme(tag="muted_clear_input_text"):
+            with dpg.theme_component(dpg.mvInputText):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, C_MUTED)
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBg, (0,0,0,0))
+                
             
 
     def _resize(self, *_):
@@ -989,7 +1030,9 @@ class App:
         dpg.delete_item("ores_tbl", children_only=True, slot=1)
         for ore, bd in self.base["ores"].items():
             st = self.state["ores"][ore]
-            bp = bd["base_price"]; stars = st.get("stars",0); mkt = st.get("market",0)
+            bp = bd["base_price"]
+            stars = st.get("stars",0)
+            mkt = st.get("market",0)
             rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
             unl = ore_unlocked(ore, self.base, self.state)
             ors = ore_mining_rate(ore, self.base, self.state)
@@ -1069,7 +1112,24 @@ class App:
                 with dpg.group(horizontal=True):
                     self._market_widget(f"mkt_al_{name}", mkt, ("alloys",name,"market"))
                 dpg.add_text(fmt(rp), tag=f"alp_{name}", color=C_TEAL)
-                dpg.add_text(rec, color=C_MUTED)
+                
+                # "Recipe"
+                with dpg.group(horizontal=True):
+                    for i,q in bd["recipe"].items():
+                        if i in self.base["ores"]:
+                            img_name = f"Ore_{i}"
+                        elif i in self.base["alloys"]:
+                            img_name = f"Alloy_{i}"
+                        else:
+                            img_name = f"Item_{i}"
+                        debug_str = f"{i}: '{img_name}'"
+                        #print(debug_str)
+                        dpg.add_image(img_name)
+                        txt = dpg.add_input_text(default_value=f"x{q}",
+                                           readonly=True,
+                                           width=60)
+                        dpg.bind_item_theme(txt, "clear_button")
+                
 
     # ── ITEMS ──────────────────────────────────────────────────────────────────
     def _tab_items(self):
@@ -1106,14 +1166,23 @@ class App:
             at  = bd["craft_time"] / cs
             rec = ", ".join(f"{q:g}×{i}" for i,q in bd["recipe"].items())
             with dpg.table_row(parent="items_tbl"):
+                # "Unlocked"
                 dpg.add_checkbox(default_value=unl,
                                  user_data=("items",name,"unlocked"),
                                  callback=self._cb_unlocked)
+                                 
+                # "Item"
                 with dpg.group(horizontal=True):
                     dpg.add_image(f"Item_{name}")
                     dpg.add_text(name)
+                    
+                # "Base $"
                 dpg.add_text(fmt(bp), color=C_MUTED)
+                
+                # "Time"
                 dpg.add_text(fmt_time(at), color=C_MUTED)
+                
+                # "Stars"
                 with dpg.group(horizontal=True):
                     self._star_widget(f"ist_{name}", 
                                 ud=("items",name,"stars"),
@@ -1121,10 +1190,28 @@ class App:
                     dpg.add_button(label="+", width=22,
                                 user_data=(("items",name,"stars"),1),
                                 callback=self._cb_stars)
+                
+                # "Market"
                 with dpg.group(horizontal=True):
                     self._market_widget(f"mkt_it_{name}", mkt, ("items",name,"market"))
+                
+                # "Real $"
                 dpg.add_text(fmt(rp), tag=f"itp_{name}", color=C_TEAL)
-                dpg.add_text(rec, color=C_MUTED)
+                
+                # "Recipe"
+                with dpg.group(horizontal=True):
+                    for i,q in bd["recipe"].items():
+                        if i in self.base["ores"]:
+                            img_name = f"Ore_{i}"
+                        elif i in self.base["alloys"]:
+                            img_name = f"Alloy_{i}"
+                        else:
+                            img_name = f"Item_{i}"
+                        dpg.add_image(img_name)
+                        txt = dpg.add_input_text(default_value=f"x{q}",
+                                           readonly=True,
+                                           width=60)
+                        dpg.bind_item_theme(txt, "clear_button")
 
     # ── PROJECTS ───────────────────────────────────────────────────────────────
     def _tab_projects(self):
@@ -1211,8 +1298,26 @@ class App:
                 dpg.add_text(fmt_time(wt) if wt > 0 else "—", color=col)
                 # col: Prereq
                 dpg.add_text(pre_str, color=col)
+                
                 # col: Ingredients
-                dpg.add_text(rec_str, color=col)
+                #dpg.add_text(rec_str, color=col)
+                with dpg.group(horizontal=True):
+                    for i,q in bd["recipe"].items():
+                        if i in self.base["ores"]:
+                            img_name = f"Ore_{i}"
+                        elif i in self.base["alloys"]:
+                            img_name = f"Alloy_{i}"
+                        else:
+                            img_name = f"Item_{i}"
+                        dpg.add_image(img_name,
+                                      tint_color=(255,255,255,255) if met else (150,150,150,200))
+                        txt = dpg.add_input_text(default_value=f"x{q}",
+                                           readonly=True,
+                                           width=60)
+                        dpg.bind_item_theme(txt, "clear_button")
+                        if not met:
+                            dpg.bind_item_theme(txt, "muted_clear_input_text")
+                
 
     def _cb_proj_check(self, s, v, ud):
         self.state["projects"][ud]["researched"] = v
@@ -1840,7 +1945,7 @@ class App:
             for w in [
                 28, 105, 25, 27,    # #, Planet, Scope, Owned, 
                 140,                    # Manager
-                58, 72,                 # M.Lvl, Min/s
+                58, 72, 72, 90,          # M.Lvl, Min/s, VPS, next_vps
                 62,                     # Calculated transport speed
                 58, 62,                 # S.Lvl, Spd
                 58, 50,                 # C.Lvl, Crg
@@ -1854,7 +1959,7 @@ class App:
         
         # Build table with initial blank values
         with dpg.table_row(parent="planet_tbl"):
-            for lbl in ["","","","","","","","","","","",""]:
+            for lbl in ["","","","","","","","","","","","",""]:
                 dpg.add_text(lbl, color=C_ACCENT)
             # columns 11-13: "Probes" spanning — place in col 11, overflow right
 
@@ -1947,6 +2052,12 @@ class App:
         save_state(self.state)
         self._refresh_planets()
         self._refresh_dashboard()
+    
+    def _planet_vps_pow(self, s, v):
+        self.prefs.update({"next_vps_pow": v})
+        save_prefs(self.prefs)
+        self._refresh_planets()
+        
 
     def _refresh_planets(self):
         # Save scroll position
@@ -1959,11 +2070,33 @@ class App:
                              ("gsc","speed"),
                              ("gcc","cargo")]:
             dpg.set_value(tc, f"×{global_bonuses[key]:.3f}")
+        next_vps_pow = self.prefs.get("next_vps_pow",0)
+        
+        # find the maximum next_vps, for number shading
+        max_nvps = 0
+        for pid, bd in self.base["planets"].items():
+            ps = self.state["planets"][pid]
+            if not ps["owned"]:
+                continue
+            lvl = ps["levels"]["mining"]
+            vps = get_vps(pid, self.state, self.base)
+            nvps = get_next_vps_per(pid, lvl, vps, self.base)
+            nvps = nvps * (10 ** next_vps_pow)
+            if nvps > max_nvps:
+                max_nvps = nvps
+            
 
         # ── header row 1: group span labels ──────────────────────────────────
         with dpg.table_row(parent="planet_tbl"):
             # columns 0-10: plain labels, no group heading
-            for lbl in ["","","","","","","","","","","",""]:
+            for lbl in ["","","","","","","",""]:
+                dpg.add_text(lbl, color=C_ACCENT)
+            
+            dpg.add_input_int(default_value=next_vps_pow,
+                              width=90,
+                              callback=self._planet_vps_pow)
+
+            for lbl in ["","","","",""]:
                 dpg.add_text(lbl, color=C_ACCENT)
             # columns 11-13: "Probes" spanning — place in col 11, overflow right
 
@@ -1985,7 +2118,7 @@ class App:
                 dpg.add_text(lbl, color=C_ACCENT)
             dpg.add_image(self._telescope, width=self._telescope_size[0], height=self._telescope_size[1])
             for lbl in [" ","Manager",
-                         "M.Lvl","Ore/s","Transport","S.Lvl","Speed","C.Lvl","Cargo"]:
+                         "M.Lvl","Ore/s","VPS","Next VPS/$","Transport","S.Lvl","Speed","C.Lvl","Cargo"]:
                 dpg.add_text(lbl, color=C_ACCENT)
             for lbl in ["Mng","Spd","Crg","","Mng","Spd","Crg",""]:
                 dpg.add_text(lbl, color=C_MUTED)
@@ -2053,7 +2186,23 @@ class App:
                             if manual_m != 1.0: dpg.add_text(f"Manual:  ×{manual_m:.3f}")
                             msec_m = manager_secondary_bonus("mining", self.state)
                             if msec_m != 1.0: dpg.add_text(f"Mgr Sec: ×{msec_m:.3f} (global)")
+
+                # "VPS" column
+                vps = 0
+                if owned:
+                    vps = get_vps(pid, self.state, self.base)
+                dpg.add_text(f"{fmt(vps)}/s", color=C_MUTED)
                 
+                # "Next VPS/$" 
+                next_vps = get_next_vps_per(pid, lvls["mining"], vps, self.base)
+                next_vps = next_vps * (10**next_vps_pow)
+                if next_vps > 0:
+                    nvc = min(255, int(255 * next_vps / max_nvps))
+                else:
+                    nvc = 0
+                dpg.add_text(f"{next_vps:.1f}", color=(nvc,nvc,nvc,255))
+ 
+                # "Transport" column
                 ts = _planet_transport(dist, sp, cg)
                 dpg.add_text(f"{ts:.1f}", color=C_TEAL if ts > mr else C_WARN)
                 lvl_grp("speed")
@@ -2416,7 +2565,6 @@ class App:
         dpg.set_value("dash_filter",  self.prefs.get("dashboard_filter","All"))
         dpg.set_value("dash_sort",    self.prefs.get("dashboard_sort","vps_profit_ore"))
         dpg.set_value("proj_sort",    self.prefs.get("projects_sort","time"))
-
 
 if __name__ == "__main__":
     App()
