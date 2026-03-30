@@ -89,6 +89,7 @@ def default_state(base: dict) -> dict:
                      for i in range(23)},
         "rooms":    {},
         "managers": [],
+        "station":  {},
     }
 
 def _deep_merge(fresh: dict, saved: dict):
@@ -169,6 +170,8 @@ def _mining_rate(lv: int, bonus: float=1.0) -> float:
     # bonus input: excludes global bonuses
     if lv == 0: return 0.0
     l = lv - 1
+    debug_str = f"    b: {bonus}   lv: {lv}"
+    #print(debug_str)
     return bonus * (0.25 + 0.1*l + 0.017*l*l)
 
 def _ship_speed(lv: int, bonus: float=1.0) -> float:
@@ -249,6 +252,32 @@ global_bonuses = {
     "speed": 1,          
     "smelt_speed": 1    
 }
+gb_descriptions = {
+    "alloy_val": "Alloy Value",
+    "item_val": "Item Value",
+    "alloy_and_item_val": "Alloy and Item Value",
+    "ast_val": "Asteroid Value",
+    "deb_val": "Debris Value",
+    "ast_and_deb_val": "Asteroid and Debris Value",
+    "cargo": "Cargo",       
+    "cash_windfall": "Cash Windfall",
+    "col_cost": "Colonization Cost",
+    "colonizing_bonus": "Colonizing Bonuses",
+    "craft_speed": "Craft Speed",
+    "craft_cost": "Craft Cost",
+    "credits": "Credits",         
+    "item_val": "Item Value",         
+    "manager_bonus": "Manager Bonuses",  
+    "manager_sec_bonus": "Manager Secondary Bonuses",  
+    "market_bonus": "Market Bonus", 
+    "mining": "Mining Rate",    
+    "pla_upg_price": "Planet Upgrade Price",
+    "prod_boost_speed": "Production Boost Speed",
+    "prod_boost_dur": "Production Boost Duration",
+    "rov_scan_time": "Rover Scan Time", 
+    "speed": "Ship Speed",          
+    "smelt_speed": "Smelt Speed"    
+}
 
 def calculate_global_bonuses(base, state):
     global global_bonuses
@@ -293,9 +322,20 @@ def calculate_global_bonuses(base, state):
         debug_str = f"  Active Managers: Multiplying bonus '{stat}' by {m}"
         #print(debug_str)
     
-    # debug output
-    #for bonus, m in global_bonuses.items():
-    #    print(f"{bonus}: {m:.2f}")
+    # Station bonus
+    for station, l in state.get("station",{}).items():
+        if l == 0:
+            continue
+        sb = base["station"].get(station,{})
+        bonus = l * sb.get("per_level",0)
+        if bonus > 0:
+            bonus = bonus + 1
+        elif bonus < 0:
+            bonus = 1 - (bonus/100)
+        stat = sb.get("boost",'')
+        global_bonuses[stat] *= bonus
+        debug_str = f"  Station {station}: Multiplying bonus '{stat}' by {bonus}"
+        #print(debug_str)
         
                 
 
@@ -385,7 +425,7 @@ def manager_primary_bonus(pid: str, stat: str, state: dict) -> float:
 def manager_secondary_bonus(stat: str, state: dict) -> float:
     """Combined cumulative secondary bonus across all ASSIGNED managers for stat.
     Only managers with a planet assigned contribute.
-    Returns a multiplier: product of individual bonuses.
+    Returns a multiplier: sum of individual bonuses.
     """
     total = 1
     for mgr in state.get("managers", []):
@@ -393,7 +433,7 @@ def manager_secondary_bonus(stat: str, state: dict) -> float:
             continue
         if mgr.get("secondary") == stat:
             stars = max(1, min(7, mgr.get("stars", 1)))
-            total = total * (_MGR_SECONDARY.get(stat, [0.0]*7)[stars - 1])
+            total = total + (_MGR_SECONDARY.get(stat, [0.0]*7)[stars - 1]) - 1
     return total
 
 # ── time helpers ───────────────────────────────────────────────────────────────
@@ -427,10 +467,20 @@ def ore_cost_rec(recipe, base, state):
     return total
 
 def prereq_met(prereq, state):
+    # check if prereqs for a project are met
     if not prereq: return True
     pr = state["projects"]
     if isinstance(prereq, list): return any(pr.get(p,{}).get("researched") for p in prereq)
     return pr.get(prereq,{}).get("researched",False)
+
+def station_prereq_met(name: str, state, base):
+    prereq = base["station"][name].get("prereq", "")
+    if not prereq: return True
+    sta = state.get("station",{})
+    if isinstance(prereq, list):
+        return any(sta.get(p,0) > 0 for p in prereq)
+    return sta.get(prereq,0) > 0
+        
 
 def analyze(name, cat, base, state):
     e  = base[cat][name]
@@ -524,6 +574,7 @@ class App:
                 with dpg.tab(label="  Managers   "): self._tab_managers()
                 with dpg.tab(label="  Beacons    "): self._tab_beacons()
                 with dpg.tab(label="  Rooms      "): self._tab_rooms()
+                with dpg.tab(label="  Station    "): self._tab_station()
 
         dpg.set_viewport_resize_callback(self._resize)
         dpg.create_viewport(title="Idle Planet Miner - Calculator",
@@ -1227,10 +1278,10 @@ class App:
             dpg.add_spacer(width=30)
             dpg.add_checkbox(label="Show Researched",
                              default_value=self.prefs["projects_show_r"],
-                             callback=self._show_researched)
+                             callback=self._show_proj_researched)
             dpg.add_checkbox(label="Show Locked",
                              default_value=self.prefs["projects_show_locked"],
-                             callback=self._show_locked)
+                             callback=self._show_proj_locked)
         with dpg.table(tag="proj_tbl", header_row=True, row_background=True,
                        borders_innerH=True, borders_outerH=True,
                        borders_innerV=True, borders_outerV=True,
@@ -1324,12 +1375,12 @@ class App:
         save_state(self.state)
         self._refresh_all()
     
-    def _show_researched(self, s, v):
+    def _show_proj_researched(self, s, v):
         self.prefs["projects_show_r"] = v
         save_prefs(self.prefs)
         self._refresh_all()
         
-    def _show_locked(self, s, v):
+    def _show_proj_locked(self, s, v):
         self.prefs["projects_show_locked"] = v
         save_prefs(self.prefs)
         self._refresh_all()
@@ -2225,6 +2276,8 @@ class App:
             scope = str(bd["telescope"]) if bd["telescope"] else "—"
             ores  = ", ".join(f"{o} {p}%" for o,p in bd["resources"].items())
             col   = C_TEXT if owned else (85,85,112,255)
+            debug_str = f"{pid}: {probe[0]}:{colony[0]}:{bm}:{mm}:{gm} :: {mr}"
+            #print(debug_str)
 
             def lvl_grp(stat):
                 with dpg.group(horizontal=True):
@@ -2510,13 +2563,14 @@ class App:
                     new_state[cat][n]["stars"] = self.state[cat][n]["stars"]
             
             # Copy over states that don't get reset
-            for cat in ("globals", "beacons", "rooms"):
+            for cat in ("globals", "beacons", "rooms", "station"):
                 new_state[cat] = self.state[cat].copy()
                 
             # Copy managers over (without planet assignments)
             for mgr in self.state["managers"]:
                 mgr["planet"] = ""
                 new_state["managers"].append(mgr.copy())
+                
             
             self.state = copy.deepcopy(new_state)
             save_state(self.state)
@@ -2653,6 +2707,115 @@ class App:
         save_state(self.state)
         self._refresh_all()
 
+    
+    # ── STATION ──────────────────────────────────────────────────────────────────
+    
+    def _tab_station(self):
+        with dpg.group(horizontal=True):
+            dpg.add_checkbox(label="Show Locked",
+                             default_value=self.prefs.get("station_show_locked",True),
+                             callback=self._show_station_locked)
+            dpg.add_checkbox(label="Show Maxed",
+                             default_value=self.prefs.get("station_show_maxed",True),
+                             callback=self._show_station_maxed)
+        with dpg.table(
+            tag="station_tbl",
+            header_row=True,
+            row_background=True,
+            borders_innerH=True, borders_outerH=True,
+            borders_innerV=True, borders_outerV=True,
+            scrollY=True, resizable=True,
+            policy=dpg.mvTable_SizingFixedFit, freeze_rows=1,
+        ):
+            for lbl, w in [
+                ("Name", 235),
+                ("Level", 100),
+                ("Max", 40),
+                ("Per lvl", 60),
+                ("Bonus", 60),
+                ("Description", 300)
+            ]:
+                dpg.add_table_column(label=lbl,
+                                     width_fixed=True,
+                                     init_width_or_weight=w)
+                                
+    def _refresh_station(self):
+        dpg.delete_item("station_tbl", children_only=True, slot=1)
+        sta_state = self.state.get("station",{})
+        for name, sta in self.base["station"].items():
+            sl = sta_state.get(name,0)
+            met = station_prereq_met(name, self.state, self.base)
+            ml = sta.get("max_level",0)
+            pl = sta.get("per_level",0)
+            boost = sta.get("boost","")
+            bonus = pl * sl
+            desc = gb_descriptions.get(boost, "")
+            if not desc: desc = boost
+            col = C_TEAL if sl > 0 else ((85,85,112,255) if not met else C_TEXT)
+            maxed = sl >= ml
+            if maxed and self.prefs.get("station_show_maxed",True):
+                continue
+            if not met and not self.prefs.get("station_show_locked",True):
+                continue
+            
+            
+            with dpg.table_row(parent="station_tbl"):
+                # col: Name
+                dpg.add_text(name, color=col)
+                
+                # col: Level
+                with dpg.group(horizontal=True):
+                    dpg.add_input_text(default_value=int(sl),
+                                       on_enter=True,
+                                       width=30,
+                                       user_data=name,
+                                       tag=f"sta_{name}_lvl",
+                                       enabled=met,
+                                       callback=self._cb_station_lvl_edit)
+                    dpg.add_button(label="+",
+                                   width=16,
+                                   user_data=name,
+                                   enabled=(not maxed) and met,
+                                   callback=self._cb_station_lvl)
+                                  
+
+                # col: Max Level
+                dpg.add_text(ml, color=col)
+
+                # col: Per level
+                pl_text = f"+{pl}" if pl > 0 else f"{pl}%"
+                dpg.add_text(pl_text, color=col)
+
+                # col: Bonus
+                bonus_text = f"x{1 + bonus}" if bonus > 0 else (f"{bonus}%" if bonus < 0 else "-")
+                dpg.add_text(bonus_text, color=col)
+
+                # col: Description
+                dpg.add_text(desc, color=col)
+     
+    def _cb_station_lvl(self, s, v, ud):
+        cur = self.state["station"].get(ud,0)
+        self.state["station"].update({ud:cur + 1})
+        save_state(self.state)
+        self._refresh_all()
+
+    def _cb_station_lvl_edit(self, s, v, ud):
+        lvl_max = self.base["station"].get(ud,{}).get("max_level",0)
+        self.state["station"].update({ud:max(0, min(int(v),lvl_max))})
+        save_state(self.state)
+        self._refresh_all()
+    
+    def _show_station_locked(self, s, v):
+        self.prefs.update({"station_show_locked":v})
+        save_prefs(self.prefs)
+        self._refresh_station()
+
+    def _show_station_maxed(self, s, v):
+        self.prefs.update({"station_show_maxed":v})
+        save_prefs(self.prefs)
+        self._refresh_station()
+            
+
     def _refresh_all(self):
         calculate_global_bonuses(self.base, self.state)
         self._refresh_ores()
@@ -2665,6 +2828,7 @@ class App:
         self._refresh_planets()
         self._refresh_managers()
         self._refresh_dashboard()
+        self._refresh_station()
         dpg.set_value("lbl_smelters", str(self.state.get("smelters",1)))
         dpg.set_value("lbl_crafters", str(self.state.get("crafters",1)))
         dpg.set_value("dash_filter",  self.prefs.get("dashboard_filter","All"))
