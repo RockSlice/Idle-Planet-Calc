@@ -2034,7 +2034,8 @@ class App:
         cur = self.state["planets"][pid]["levels"][stat]
         self.state["planets"][pid]["levels"][stat] = max(1, cur+delta)
         save_state(self.state)
-        self._refresh_planets()
+        self._refresh_single_planet(pid)
+        #self._refresh_planets()
         self._refresh_dashboard()
 
     def _cb_planet_lvl_edit(self, s, v, ud):
@@ -2058,6 +2059,85 @@ class App:
         save_prefs(self.prefs)
         self._refresh_planets()
         
+    def _refresh_single_planet(self, pid:str):
+        bd = self.base["planets"][pid]
+        ps = self.state["planets"][pid]
+        owned = ps["owned"]; lvls = ps["levels"]
+        probe = ps["probes"]; colony = ps["colony"]
+        dist = self.base["planets"][pid]["distance"]
+        next_vps_pow = self.prefs.get("next_vps_pow",0)
+        max_nvps = self.prefs.get("max_nvps",100)
+        
+        gm=global_bonuses["mining"]
+        gs=global_speed_bonus(self.state)
+        gc=global_cargo_bonus(self.state)
+
+        bm = beacon_bonus(pid,"mining",self.base,self.state)
+        bs = beacon_bonus(pid,"speed", self.base,self.state)
+        bc = beacon_bonus(pid,"cargo", self.base,self.state)
+        mm = manager_primary_bonus(pid,"mining",self.state)
+        ms = manager_primary_bonus(pid,"speed", self.state)
+        mc = manager_primary_bonus(pid,"cargo", self.state)
+        mb = probe[0]*colony[0]*bm*mm*gm
+        sb = probe[1]*colony[1]*bs*ms*gs
+        cb = probe[2]*colony[2]*bc*mc*gc
+        mr = _mining_rate(lvls["mining"],mb) if owned else 0
+        sp = _ship_speed( lvls["speed"], sb) if owned else 0
+        cg = _ship_cargo( lvls["cargo"], cb) if owned else 0
+        col   = C_TEXT if owned else (85,85,112,255)
+        
+        # PID
+        # Planet
+        # Scope
+        # Owned
+        dpg.set_value(f"pla_{pid}_owned", ps["owned"])
+        
+        # Manager - skip - this will need a full refresh
+        
+        # M.Lvl
+        dpg.set_value(f"pla_{pid}_mininglvl", ps["levels"]["mining"])
+        
+        # Ore/s
+        dpg.set_value(f"pla_{pid}_ops", f"{mr:.2f}" if owned else "—")
+        
+        # VPS
+        vps = get_vps(pid, self.state, self.base) if owned else 0
+        dpg.set_value(f"pla_{pid}_vps", f"{fmt(vps)}/s")
+        
+        # VPS/$
+        next_vps = get_next_vps_per(pid, lvls["mining"], vps, self.base)
+        next_vps = next_vps * (10**next_vps_pow)
+        if next_vps > 0:
+            nvc = min(255, int(255 * next_vps / max_nvps))
+        else:
+            nvc = 0
+        dpg.set_value(f"pla_{pid}_nvps", f"{next_vps:.1f}")
+        dpg.configure_item(f"pla_{pid}_nvps", color=(nvc,nvc,nvc,255))
+        
+        # Transport
+        ts = _planet_transport(dist, sp, cg)
+        dpg.set_value(f"pla_{pid}_trans", f"{ts:.1f}")
+        dpg.configure_item(f"pla_{pid}_trans", color=C_TEAL if ts > mr else C_WARN)
+        
+        # S.lvl
+        dpg.set_value(f"pla_{pid}_speedlvl", ps["levels"]["speed"])
+
+        # Speed
+        dpg.set_value(f"pla_{pid}_speed", f"{sp:.2f}" if owned else "—")
+        
+        # C.Lvl
+        dpg.set_value(f"pla_{pid}_cargolvl", ps["levels"]["cargo"])
+        
+        # Cargo
+        dpg.set_value(f"pla_{pid}_cargo", str(cg) if owned else "—")
+
+        # Probes
+        for idx in range(3):
+            dpg.set_value(f"pla_{pid}_probe{idx}", f"{probe[idx]:.2f}")
+        
+        # Colony
+        for idx in range(3):
+            dpg.set_value(f"pla_{pid}_colony{idx}", f"{colony[idx]:.2f}")
 
     def _refresh_planets(self):
         # Save scroll position
@@ -2084,6 +2164,7 @@ class App:
             nvps = nvps * (10 ** next_vps_pow)
             if nvps > max_nvps:
                 max_nvps = nvps
+            self.prefs.update({"max_nvps": max_nvps})
             
 
         # ── header row 1: group span labels ──────────────────────────────────
@@ -2148,7 +2229,12 @@ class App:
             def lvl_grp(stat):
                 with dpg.group(horizontal=True):
                     if owned:
-                        dpg.add_input_text(default_value=int(lvls[stat]), on_enter=True, width=34, user_data=(pid,stat),callback=self._cb_planet_lvl_edit)
+                        dpg.add_input_text(default_value=int(lvls[stat]),
+                                           on_enter=True,
+                                           width=34,
+                                           user_data=(pid,stat),
+                                           tag=f"pla_{pid}_{stat}lvl",
+                                           callback=self._cb_planet_lvl_edit)
                         dpg.add_button(label="+",width=16,user_data=(pid,stat,1), callback=self._cb_planet_lvl)
                     else:
                         dpg.add_text("—", color=C_MUTED)
@@ -2158,7 +2244,8 @@ class App:
                 dpg.add_text(bd["name"], color=col)
                 dpg.add_text(scope, color=C_MUTED)
                 dpg.add_checkbox(default_value=owned, user_data=pid,
-                                 callback=self._cb_planet_owned)
+                                 callback=self._cb_planet_owned,
+                                 tag=f"pla_{pid}_owned")
                 # Manager column
                 mgr_names = [""] + [m["name"] for m in self.state.get("managers", [])]
                 cur_mgr = next((m["name"] for m in self.state.get("managers", []) if m.get("planet")==pid), "")
@@ -2171,7 +2258,9 @@ class App:
                 
                 # "Ore/s" column
                 with dpg.group():
-                    dpg.add_text(f"{mr:.2f}" if owned else "—", color=col)
+                    dpg.add_text(f"{mr:.2f}" if owned else "—",
+                                 tag=f"pla_{pid}_ops",
+                                 color=col)
                     if owned:
                         with dpg.tooltip(dpg.last_item()):
                             base_mr = _mining_rate(lvls["mining"])
@@ -2191,7 +2280,9 @@ class App:
                 vps = 0
                 if owned:
                     vps = get_vps(pid, self.state, self.base)
-                dpg.add_text(f"{fmt(vps)}/s", color=C_MUTED)
+                dpg.add_text(f"{fmt(vps)}/s",
+                             tag=f"pla_{pid}_vps",
+                             color=C_MUTED)
                 
                 # "Next VPS/$" 
                 next_vps = get_next_vps_per(pid, lvls["mining"], vps, self.base)
@@ -2200,14 +2291,22 @@ class App:
                     nvc = min(255, int(255 * next_vps / max_nvps))
                 else:
                     nvc = 0
-                dpg.add_text(f"{next_vps:.1f}", color=(nvc,nvc,nvc,255))
+                dpg.add_text(f"{next_vps:.1f}",
+                             tag=f"pla_{pid}_nvps",
+                             color=(nvc,nvc,nvc,255))
  
                 # "Transport" column
                 ts = _planet_transport(dist, sp, cg)
-                dpg.add_text(f"{ts:.1f}", color=C_TEAL if ts > mr else C_WARN)
+                dpg.add_text(f"{ts:.1f}", 
+                             tag=f"pla_{pid}_trans",
+                             color=C_TEAL if ts > mr else C_WARN)
+                
+                # Speed column
                 lvl_grp("speed")
                 with dpg.group():
-                    dpg.add_text(f"{sp:.2f}" if owned else "—", color=col)
+                    dpg.add_text(f"{sp:.2f}" if owned else "—",
+                                 tag=f"pla_{pid}_speed",
+                                 color=col)
                     if owned:
                         with dpg.tooltip(dpg.last_item()):
                             base_sp = _ship_speed(lvls["speed"])
@@ -2222,9 +2321,13 @@ class App:
                             if manual_s != 1.0: dpg.add_text(f"Manual:  ×{manual_s:.3f}")
                             msec_s = manager_secondary_bonus("speed", self.state)
                             if msec_s != 1.0: dpg.add_text(f"Mgr Sec: ×{msec_s:.3f} (global)")
+                
+                # "Cargo" column
                 lvl_grp("cargo")
                 with dpg.group():
-                    dpg.add_text(str(cg) if owned else "—", color=col)
+                    dpg.add_text(str(cg) if owned else "—", 
+                                 tag=f"pla_{pid}_cargo",
+                                 color=col)
                     if owned:
                         with dpg.tooltip(dpg.last_item()):
                             base_cg = _ship_cargo(lvls["cargo"])
@@ -2244,6 +2347,7 @@ class App:
                     probe_input = dpg.add_input_text(default_value=f"{probe[idx]:.2f}",width=52,
                                        on_enter=True,
                                        user_data=(pid,"probes",idx),
+                                       tag=f"pla_{pid}_probe{idx}",
                                        callback=self._cb_planet_bonus_val)
                     if probe[idx] == 1:
                         dpg.bind_item_theme(probe_input, "muted_input_text")
@@ -2256,6 +2360,7 @@ class App:
                     colony_input = dpg.add_input_text(default_value=str(colony[idx]),width=52,
                                        on_enter=True,
                                        user_data=(pid,"colony",idx),
+                                       tag=f"pla_{pid}_colony{idx}",
                                        callback=self._cb_planet_bonus_val)
                     if colony[idx] == 1:
                         dpg.bind_item_theme(colony_input, "muted_input_text")
