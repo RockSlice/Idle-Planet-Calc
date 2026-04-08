@@ -27,7 +27,8 @@ C_TEXT    = (224, 224, 240, 255)
 C_MUTED   = (136, 136, 153, 255)
 C_GOOD    = (86,  207, 178, 255)
 C_BAD     = (224, 92,  106, 255)
-C_WARN    = (240, 192, 64,  255)
+C_GOLD    = (196, 196, 0,   255)
+C_WARN    = (255, 192, 64,  255)
 C_ROW_A   = (37,  37,  56,  255)
 C_ROW_B   = (42,  42,  62,  255)
 C_ENTRY   = (51,  51,  74,  255)
@@ -40,7 +41,7 @@ _SFX = [(1e33,"D"),(1e30,"N"),(1e27,"O"),(1e24,"Sp"),(1e21,"Sx"),
         (1e18,"Qi"),(1e15,"Q"),(1e12,"T"),(1e9,"B"),(1e6,"M"),(1e3,"K")]
 
 def fmt(n: float) -> str:
-    if n == 0: return "$0"
+    if n == 0: return "0"
     neg = n < 0; n = abs(n)
     for thr, sfx in _SFX:
         if n >= thr: return f"{'−' if neg else ''}{n/thr:.1f}{sfx}"
@@ -105,6 +106,7 @@ def default_state(base: dict) -> dict:
         "rooms":    {},
         "managers": [],
         "station":  {},
+        "base_updates": [],
     }
 
 def _deep_merge(fresh: dict, saved: dict):
@@ -114,12 +116,33 @@ def _deep_merge(fresh: dict, saved: dict):
         elif isinstance(v, dict) and isinstance(saved.get(k), dict):
             _deep_merge(v, saved[k])
 
+def update_base(base: dict, path: list, op: str, value):
+    if len(path) == 0:
+        return
+    # Walk to the parent of the target:
+    node = base
+    for key in path[:-1]:
+        node = node[key]
+        
+    target_key = path[-1]
+    
+    if op == "replace":
+        node[target_key] = value
+    elif op == "update":
+        node[target_key].update(value)
+    elif op == "multiply":
+        node[target_key] *= value
+    
+
 def load_state(base: dict) -> dict:
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE) as f:
                 saved = json.load(f)
             _deep_merge(default_state(base), saved)
+            for update in saved.get("base_updates",[]):
+                update_base(base, update["path"], update["op"], update["value"])
+            
             return saved
         except Exception:
             pass
@@ -180,6 +203,23 @@ def ore_mining_rate(ore: str, base: dict, state: dict) -> float:
         bonus = ps["probes"][0] * ps["colony"][0] * gm
         total += _mining_rate(lvl, bonus) * (pct / 100.0)
     return total
+    
+def _ore_sell_rate(ore: str, base: dict, state: dict) -> float:
+    # Returns the ore_mining_rate minus the amount used on the primary alloy in one smelter
+    # Includes a 10% buffer
+    # returns as a percentage
+    mr = ore_mining_rate(ore, base, state)
+    if mr == 0:
+        return 0
+    alloy = base["ores"].get(ore,{}).get("alloy","")
+    ba = base["alloys"].get(alloy,{})
+    smelt_time = ba.get("smelt_time", 60)
+    smelt_time = smelt_time / global_bonuses.get("smelt_speed", 1)
+    smelt_amt = ba.get("recipe",{}).get(ore,0)
+    smelt_amt *= global_bonuses.get("smelt_ing", 1)
+    smelt_rate = smelt_amt / smelt_time
+    return 90 * (mr - smelt_rate) / mr
+    
 
 def _mining_rate(lv: int, bonus: float=1.0) -> float:
     # bonus input: excludes global bonuses
@@ -199,6 +239,7 @@ def _ship_cargo(lv: int, bonus: float=1.0) -> int:
     l = lv - 1
     return round(bonus * (5.0 + 2.0*l + (0.1*(l**2))))
 
+
 def _planet_transport(dist: int, speed: float, cargo: int) -> float:
     # dist is in Mkm
     # speed is in Mkm/h
@@ -212,6 +253,28 @@ def _planet_transport(dist: int, speed: float, cargo: int) -> float:
     # return cargo per second
     transport = cargo * (Mkps / dist)
     return transport
+    
+def _get_valuable_ore(ores: list, base) -> int:
+    # input: list of ore names
+    # output: index of most valuable ore, based on ipm_base
+    max_i = 0
+    max_v = 0
+    for i, ore in enumerate(ores):
+        v = base["ores"].get(ore,{}).get("base_price",0)
+        if v > max_v:
+            max_v = v
+            max_i = i
+    return max_i
+    
+def _planet_ore_pri(pid: str, state: dict, base: dict) -> int:
+    # returns the prioritized ore.  If unset, defaults to most valuable ore
+    # In the game, this *may* take into account market.  Need to check
+    pla = state["planets"].get(pid,{})
+    p = pla.get("ore_pri",-1)
+    orelist = list(base["planets"].get(pid,{}).get("resources", {}).keys())
+    if p < 0 or p >= len(orelist):
+        p = _get_valuable_ore(orelist, base)
+    return p
 
 def _proj(state, name): return state["projects"].get(name,{}).get("researched",False)
 
@@ -272,7 +335,8 @@ gb_descriptions = {
     "proj_cost": "Decrease Project Cost",
     "rov_scan_time": "Rover Scan Time", 
     "speed": "Ship Speed",          
-    "smelt_speed": "Smelt Speed"    
+    "smelt_speed": "Smelt Speed",
+    "smelt_ing": "Decrease Smelter Ingredients"    
 }
 
 def calculate_global_bonuses(base, state):
@@ -302,7 +366,7 @@ def calculate_global_bonuses(base, state):
         pl = room["per_level"]
         if stat:
             v = be + (pl * (level - 1))
-            global_bonuses[stat] *= v
+            global_bonuses[stat] = global_bonuses.get(stat,1) * v
             debug_str = f"  Room '{room['name']}': Multiplying bonus '{stat}' by {v}"
             #print(debug_str)
     # include manual adjustments
@@ -319,6 +383,7 @@ def calculate_global_bonuses(base, state):
         #print(debug_str)
     
     # Station bonus
+    station_bonuses = {}
     for station, l in state.get("station",{}).items():
         if l == 0:
             continue
@@ -327,52 +392,18 @@ def calculate_global_bonuses(base, state):
         if not stat: continue
         if "ore_star" in stat: continue
         bonus = l * sb.get("per_level",0)
-        if bonus > 0:
-            bonus = bonus + 1
-        elif bonus < 0:
-            bonus = 1 - (bonus/100)
+        if bonus < 0:
+            bonus = (bonus/100)
+        station_bonuses[stat] = station_bonuses.get(stat,1) + bonus
+        debug_str = f"  Station {station}: modifying '{stat}' by {bonus}: {station_bonuses[stat]}"
+        #print(debug_str)
+        
+    for stat, bonus in station_bonuses.items():
         global_bonuses[stat] *= bonus
-        debug_str = f"  Station {station}: Multiplying bonus '{stat}' by {bonus}"
+        debug_str = f"  Station : Multiplying bonus '{stat}' by {bonus}"
         #print(debug_str)
         
                 
-
-def global_mining_bonus(state):
-    v = float(state.get("globals",{}).get("mining",1))
-    if _proj(state,"Advanced Mining"):  v *= 1.25
-    if _proj(state,"Superior Mining"):  v *= 1.25
-    v *= room_bonus("mining", _g_base, state)
-    v *= manager_secondary_bonus("mining", state)
-    return v
-
-def global_speed_bonus(state):
-    v = float(state.get("globals",{}).get("speed",1))
-    if _proj(state,"Advanced Thrusters"): v *= 1.25
-    if _proj(state,"Superior Thrusters"): v *= 1.25
-    v *= room_bonus("speed", _g_base, state)
-    v *= manager_secondary_bonus("speed", state)
-    return v
-
-def global_cargo_bonus(state):
-    v = float(state.get("globals",{}).get("cargo",1))
-    if _proj(state,"Advanced Cargo Handling"): v *= 1.25
-    if _proj(state,"Superior Cargo Handling"): v *= 1.25
-    v *= room_bonus("cargo", _g_base, state)
-    v *= manager_secondary_bonus("cargo", state)
-    return v
-
-def global_smelt_speed(state):
-    v = float(state.get("globals",{}).get("smelt_speed",1))
-    v *= room_bonus("smelt_speed", _g_base, state)
-    v *= manager_secondary_bonus("smelt_speed", state)
-    return v
-
-def global_craft_speed(state):
-    v = float(state.get("globals",{}).get("craft_speed",1))
-    v *= room_bonus("craft_speed", _g_base, state)
-    v *= manager_secondary_bonus("craft_speed", state)
-    return v
-
 def beacon_bonus(pid: str, stat: str, base: dict, state: dict) -> float:
     """Return the beacon multiplier for planet pid and stat (mining/speed/cargo)."""
     scope = str(base["planets"][pid]["telescope"])
@@ -417,7 +448,9 @@ def manager_primary_bonus(pid: str, stat: str, state: dict) -> float:
     for mgr in state.get("managers", []):
         if mgr.get("planet") == pid and mgr.get("primary") == stat:
             stars = max(1, min(7, mgr.get("stars", 1)))
-            return _MGR_PRIMARY[stat][stars - 1]
+            gm = global_bonuses.get("manager_bonus", 1)
+            mgr_bonus = (_MGR_PRIMARY[stat][stars - 1]) - 1
+            return 1 + (gm * mgr_bonus)
     return 1.0
 
 def manager_secondary_bonus(stat: str, state: dict) -> float:
@@ -432,13 +465,15 @@ def manager_secondary_bonus(stat: str, state: dict) -> float:
         if mgr.get("secondary") == stat:
             stars = max(1, min(7, mgr.get("stars", 1)))
             total = total + (_MGR_SECONDARY.get(stat, [0.0]*7)[stars - 1]) - 1
+    gm = global_bonuses.get("manager_bonus", 1)        
+    total = 1 + (gm * (total - 1))
     return total
 
 # ── time helpers ───────────────────────────────────────────────────────────────
 def total_smelt_time(name, cat, base, state):
     e   = base[cat][name]
     own = e["smelt_time"] if cat=="alloys" else 0.0
-    t   = own / max(0.001, global_smelt_speed(state))
+    t   = own / max(0.001, global_bonuses['smelt_speed'])
     for ing, qty in e.get("recipe",{}).items():
         c2 = "alloys" if ing in base["alloys"] else ("items" if ing in base["items"] else None)
         if c2: t += total_smelt_time(ing, c2, base, state) * qty
@@ -447,7 +482,7 @@ def total_smelt_time(name, cat, base, state):
 def total_craft_time(name, cat, base, state):
     e   = base[cat][name]
     own = e["craft_time"] if cat=="items" else 0.0
-    t   = own / max(0.001, global_craft_speed(state))
+    t   = own / max(0.001, global_bonuses['craft_speed'])
     for ing, qty in e.get("recipe",{}).items():
         c2 = "alloys" if ing in base["alloys"] else ("items" if ing in base["items"] else None)
         if c2: t += total_craft_time(ing, c2, base, state) * qty
@@ -485,7 +520,7 @@ def analyze(name, cat, base, state):
     ov = effective_price(name, base, state)
     tk = "smelt_time" if cat=="alloys" else "craft_time"
     t  = e.get(tk,1)
-    adj_t = t / max(0.001, global_smelt_speed(state) if cat=="alloys" else global_craft_speed(state))
+    adj_t = t / max(0.001, global_bonuses['smelt_speed'] if cat=="alloys" else global_bonuses['craft_speed'])
     sm = total_smelt_time(name, cat, base, state)
     cr = total_craft_time(name, cat, base, state)
     s  = state.get("smelters",1); c = state.get("crafters",1)
@@ -536,13 +571,16 @@ def get_next_vps_per(pid: str, level: int, vps: float, base: dict, state: dict) 
     l2 = level - 2
     next_vps = 0
     if level == 0:
-        next_cost = bp
-        next_vps = get_vps(pid, state, base, 1)
+        # Non-owned: amortized VPS/$ if bought and upgraded to level 9.
+        # Peak level is always 9 regardless of ore prices (cost/rate curve property).
+        # Total cost = bp + sum of upgrade costs for levels 1..8
+        total_cost = bp + sum((bp/20) * (1.3**l) for l in range(8))
+        return get_vps(pid, state, base, 9) / total_cost
     else:
-        next_cost = (bp/20) * (1.3**(l1))
-        next_vps = vps * (0.25 + 0.1*l1 + 0.017*(l1**2))/(0.25 + 0.1*l2 + 0.017*(l2**2))
-
-    return next_vps / next_cost
+        # Owned: marginal VPS/$ of the next mining level upgrade.
+        next_cost = (bp/20) * (1.3**(level - 1))
+        next_vps  = get_vps(pid, state, base, level + 1) - get_vps(pid, state, base, level)
+        return next_vps / next_cost
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Application
@@ -578,7 +616,7 @@ class App:
 
         dpg.set_viewport_resize_callback(self._resize)
         dpg.create_viewport(title="Idle Planet Miner - Calculator",
-                            width=1440, height=860, min_width=900, min_height=600)
+                            width=1500, height=860, min_width=900, min_height=600)
         dpg.setup_dearpygui()
         dpg.show_viewport()
         self._resize()
@@ -727,6 +765,18 @@ class App:
             with dpg.texture_registry():
                 dpg.add_static_texture(
                         width=w, height=h, default_value=flat, tag=f"Item_{item}")
+                        
+        for pid,pb in self.base["planets"].items():
+            pname = pb["name"]
+            img_path = f"{SCRIPT_DIR}/Images/Planet_{pname}.png"
+            if not os.path.exists(img_path):
+                img_path = f"{SCRIPT_DIR}/Images/Planet_Unknown.png"
+            img = Image.open(img_path).convert("RGBA")
+            w,h = img.size
+            flat = [c / 255.0 for px in img.getdata() for c in px]
+            with dpg.texture_registry():
+                dpg.add_static_texture(
+                        width=w, height=h, default_value=flat, tag=f"Planet_{pname}")
 
 
     def _load_chevrons(self):
@@ -934,7 +984,12 @@ class App:
             with dpg.theme_component(dpg.mvInputText):
                 dpg.add_theme_color(dpg.mvThemeCol_Text, C_MUTED)
                 dpg.add_theme_color(dpg.mvThemeCol_FrameBg, (0,0,0,0))
-                
+        
+        with dpg.theme(tag="ore_priority"):
+            with dpg.theme_component(dpg.mvImageButton):
+                dpg.add_theme_style(dpg.mvStyleVar_FrameBorderSize, 2)
+                dpg.add_theme_color(dpg.mvThemeCol_Border, C_GOLD)
+                                
             
 
     def _resize(self, *_):
@@ -1024,6 +1079,11 @@ class App:
             dpg.add_spacer(width=18)
             self._machines_strip()
 
+        with dpg.group(horizontal=True):
+            tvps = 0
+            dpg.add_text("Total Ore VPS: ", color=C_TEXT)
+            dpg.add_text(f"$ {fmt(tvps)}", color=C_TEAL, tag="dash_tvps")
+
         with dpg.table(tag="dash_tbl", header_row=True, row_background=True,
                        borders_innerH=True, borders_outerH=True,
                        borders_innerV=True, borders_outerV=True,
@@ -1039,6 +1099,13 @@ class App:
         sort  = self.prefs.get("dashboard_sort","vps_profit_ore")
         if flt == "Alloys": rows = [r for r in rows if r["category"]=="alloys"]
         if flt == "Items":  rows = [r for r in rows if r["category"]=="items"]
+        tvps = 0
+        for pid, ps in self.state["planets"].items():
+            if ps["owned"]:
+                vps = get_vps(pid, self.state, self.base)
+                tvps += vps
+        dpg.set_value("dash_tvps", f"$ {fmt(tvps)}")
+    
         rows  = [r for r in rows if r["unlocked"]]
         rows.sort(key=lambda r: r.get(sort,0), reverse=True)
         for r in rows:
@@ -1074,7 +1141,8 @@ class App:
                        scrollY=True, resizable=True,
                        policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
             for lbl, w in [("",28),("Ore",140),("Base $",105),
-                            ("Stars",80),("Market",90),("Real $",105),("Ore/s",82)]:
+                            ("Stars",80),("Market",90),("Real $",105),
+                            ("Ore/s",82),("Safe sell rate", 60)]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
     def _refresh_ores(self):
@@ -1088,6 +1156,7 @@ class App:
             unl = ore_unlocked(ore, self.base, self.state)
             ors = ore_mining_rate(ore, self.base, self.state)
             ore_img = f"Ore_{ore}"
+            ore_sell_rate = _ore_sell_rate(ore, self.base, self.state)
             with dpg.table_row(parent="ores_tbl"):
                 if unl:
                     dpg.add_image(self._check)
@@ -1107,8 +1176,10 @@ class App:
                 with dpg.group(horizontal=True):
                     self._market_widget(f"mkt_or_{ore}", mkt, ("ores",ore,"market"))
                 dpg.add_text(fmt(rp), tag=f"orp_{ore}", color=C_TEAL)
-                dpg.add_text(f"{ors:.4f}" if ors else "—",
+                dpg.add_text(f"{ors:.2f}" if ors else "—",
                              tag=f"ors_{ore}", color=C_MUTED)
+                dpg.add_text(f"{ore_sell_rate:.0f} %" if ors else "—",
+                             tag=f"ore_{ore}_sell", color=C_MUTED)
 
     # ── ALLOYS ─────────────────────────────────────────────────────────────────
     def _tab_alloys(self):
@@ -1135,7 +1206,7 @@ class App:
 
     def _refresh_alloys(self):
         dpg.delete_item("alloys_tbl", children_only=True, slot=1)
-        ss = max(0.001, global_smelt_speed(self.state))
+        ss = max(0.001, global_bonuses['smelt_speed'])
         dpg.set_value("alc_comp", f"×{ss:.3f}")
         for name, bd in self.base["alloys"].items():
             st = self.state["alloys"][name]
@@ -1207,7 +1278,7 @@ class App:
 
     def _refresh_items(self):
         dpg.delete_item("items_tbl", children_only=True, slot=1)
-        cs = max(0.001, global_craft_speed(self.state))
+        cs = max(0.001, global_bonuses['craft_speed'])
         dpg.set_value("itc_comp", f"×{cs:.3f}")
         for name, bd in self.base["items"].items():
             st = self.state["items"][name]
@@ -1288,7 +1359,7 @@ class App:
                        scrollY=True, scrollX=True, resizable=True,
                        policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
             for lbl, w in [("",28),("Project",200),("Cost",110),("Time",82),
-                            ("Prereq",170),("Ingredients",380)]:
+                            ("Ingredients",320),("Prereq",270)]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
     def _refresh_projects(self):
@@ -1347,8 +1418,6 @@ class App:
                 dpg.add_text(f"$ {fmt(cost)}",color=col)
                 # col: Time
                 dpg.add_text(fmt_time(wt) if wt > 0 else "—", color=col)
-                # col: Prereq
-                dpg.add_text(pre_str, color=col)
                 
                 # col: Ingredients
                 #dpg.add_text(rec_str, color=col)
@@ -1372,23 +1441,34 @@ class App:
                         dpg.bind_item_theme(txt, "clear_button")
                         if not met:
                             dpg.bind_item_theme(txt, "muted_clear_input_text")
+                # col: Prereq
+                dpg.add_text(pre_str, color=col)
                 
 
     def _cb_proj_check(self, s, v, ud):
         self.state["projects"][ud]["researched"] = v
         save_state(self.state)
-        #if "Alchemy" in ud:
-         #   _proj_alchemy(self, ud)
+        if v and ("Alchemy" in ud):
+            self._proj_alchemy(ud)
          
         self._refresh_all()
     
     def _proj_alchemy(self, proj: str):
         vp_w = dpg.get_viewport_client_width()
         vp_h = dpg.get_viewport_client_height()
-        dlg_w, dlg_h = 320, 210
+        dlg_w, dlg_h = 320, 340
         px = (vp_w - dlg_w) // 2
         py = (vp_h - dlg_h) // 2
         planet_items = self._col_owned_planet_items()
+
+        # Determine upgrade step from project name
+        if "Superior" in proj:
+            step = 3
+        elif "Advanced" in proj:
+            step = 2
+        else:
+            step = 1
+
         with dpg.window(label=f"{proj}",
                         modal=True,
                         tag="proj_alchemy_dlg",
@@ -1397,9 +1477,164 @@ class App:
             dpg.add_combo(
                 items=planet_items,
                 default_value="",
-                width=145,
+                width=200,
+                user_data=step,
                 callback=self._cb_proj_alc_planet)
-            
+            # Placeholder child window — filled when planet is chosen
+            with dpg.child_window(tag="proj_alchemy_options",
+                                  height=-1, border=False):
+                pass
+    
+    def _cb_proj_alc_planet(self, sender, value, user_data):
+        """Called when the user picks a planet in the alchemy dialog."""
+        step = user_data  # 1 / 2 / 3 depending on Alchemy tier
+
+        # Clear and rebuild the options child window
+        dpg.delete_item("proj_alchemy_options", children_only=True)
+
+        if not value:
+            return
+
+        # Parse pid from "pid: Name"
+        pid = value.split(":")[0].strip()
+        planet_resources = list(self.base["planets"][pid]["resources"].keys())
+        ore_list = list(self.base["ores"].keys())
+        icon_sz = 32
+
+        # Build valid (ore -> next_ore) pairs
+        valid_options = []
+        for ore in planet_resources:
+            if ore not in ore_list:
+                continue
+            idx = ore_list.index(ore)
+            next_idx = idx + step
+            if next_idx < len(ore_list):
+                valid_options.append((ore, ore_list[next_idx]))
+
+        if not valid_options:
+            dpg.add_text("No upgradeable resources on this planet.",
+                         parent="proj_alchemy_options",
+                         color=(200, 100, 100, 255))
+            return
+
+        # Track selection
+        selected = [valid_options[0][0]]
+
+        # Tags for image buttons
+        ore_btn_tags  = {}   # ore -> tag of the ore image button (clickable)
+        next_btn_tags = {}   # ore -> tag of the next_ore image button (decorative)
+
+        def _apply_selection_visuals():
+            for ore, _ in valid_options:
+                is_sel = (ore == selected[0])
+                tint = (255, 255, 255, 255) if is_sel else (150, 150, 150, 160)
+                dpg.configure_item(ore_btn_tags[ore],  tint_color=tint)
+                dpg.configure_item(next_btn_tags[ore], tint_color=tint)
+                if is_sel:
+                    dpg.bind_item_theme(ore_btn_tags[ore], "ore_priority")
+                else:
+                    dpg.bind_item_theme(ore_btn_tags[ore], 0)
+
+        def _select(s, v, ud):
+            selected[0] = ud
+            _apply_selection_visuals()
+
+        dpg.add_text("Select resource to transmute:",
+                     parent="proj_alchemy_options")
+        dpg.add_spacer(height=4, parent="proj_alchemy_options")
+
+        for i, (ore, next_ore) in enumerate(valid_options):
+            is_first = (i == 0)
+            ore_tag  = f"proj_alc_ore_btn_{i}"
+            next_tag = f"proj_alc_next_btn_{i}"
+            ore_btn_tags[ore]  = ore_tag
+            next_btn_tags[ore] = next_tag
+
+            with dpg.group(horizontal=True, parent="proj_alchemy_options"):
+                # Ore image button -- clicking this selects the row
+                dpg.add_image_button(
+                    texture_tag=f"Ore_{ore}",
+                    tag=ore_tag,
+                    width=icon_sz, height=icon_sz,
+                    tint_color=(255, 255, 255, 255) if is_first else (150, 150, 150, 160),
+                    user_data=ore,
+                    callback=_select)
+                if is_first:
+                    dpg.bind_item_theme(ore_tag, "ore_priority")
+
+                # Arrow
+                if self._arrow_right is not None:
+                    dpg.add_image(self._arrow_right,
+                                  width=self._arrow_right_size[0],
+                                  height=self._arrow_right_size[1])
+                else:
+                    dpg.add_text("->")
+
+                # Next ore -- non-interactive, dims/brightens with selection
+                dpg.add_image_button(
+                    texture_tag=f"Ore_{next_ore}",
+                    tag=next_tag,
+                    width=icon_sz, height=icon_sz,
+                    enabled=False,
+                    tint_color=(255, 255, 255, 255) if is_first else (150, 150, 150, 160))
+
+                dpg.add_text(f"  {ore} -> {next_ore}")
+
+        dpg.add_spacer(height=6, parent="proj_alchemy_options")
+
+        def _confirm(s, v, ud):
+            chosen = selected[0]
+            planet_name = self.base["planets"][pid]["name"]
+            for ore, next_ore in valid_options:
+                if ore == chosen:
+                    print(f"changing {planet_name} resource '{ore}' to '{next_ore}'")
+                    old_resources = self.base["planets"][pid]["resources"]
+                    new_resources = {}
+                    for k, v in old_resources.items():
+                        if k == ore:
+                            k = next_ore
+                        if k in new_resources:
+                            new_resources[k] += v
+                        else:
+                            new_resources[k] = v
+                    print(old_resources)
+                    print(new_resources)
+                    path = ["planets", pid, "resources"]
+                    update_base(self.base, path, "replace", new_resources)
+                    self.state["base_updates"].append({
+                            "path": path,
+                            "op": "replace",
+                            "value": new_resources,
+                            "note": f"Project: Alchemy {step}"
+                        })
+                    save_state(self.state)
+                    
+                    # rebuild the relevant resource display on the Planets tab
+                    dpg.delete_item(f"pla_{pid}_ores_group", children_only=True)
+                    ore_p = _planet_ore_pri(pid, self.state, self.base)
+                    with dpg.group(horizontal=True, parent=f"pla_{pid}_ores_group"):
+                        enable_logistics = _proj(self.state, "Cargo Logistics")
+                        for i, (k,v) in enumerate(new_resources.items()):
+                            img_name = f"Ore_{k}"
+                            dpg.add_image_button(texture_tag=img_name,
+                                                 tag=f"pla_{pid}_ore{i}",
+                                                 enabled=enable_logistics,
+                                                 tint_color=(255,255,255,255) if enable_logistics else (150,150,150,200),
+                                                 user_data=(pid,i),
+                                                 callback=self._cb_planet_ore_priority)
+                            dpg.add_text(f"{v}%",
+                                         color=C_TEXT,
+                                         tag=f"pla_{pid}_ore{i}_text")
+                    
+                    self._refresh_all()
+                    break
+            dpg.delete_item("proj_alchemy_dlg")
+
+        with dpg.group(horizontal=True, parent="proj_alchemy_options"):
+            dpg.add_button(label="Apply",  width=80, callback=_confirm)
+            dpg.add_spacer(width=8)
+            dpg.add_button(label="Cancel", width=80,
+                           callback=lambda: dpg.delete_item("proj_alchemy_dlg"))
     
     def _show_proj_researched(self, s, v):
         self.prefs["projects_show_r"] = v
@@ -1557,9 +1792,7 @@ class App:
         mgrs = self.state.get("managers", [])
         if 0 <= ud < len(mgrs): mgrs.pop(ud)
         save_state(self.state)
-        self._refresh_managers()
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_mgr_name(self, s, v, ud):
         self.state["managers"][ud]["name"] = v.strip() or f"Manager {ud+1}"
@@ -2030,13 +2263,16 @@ class App:
                 5,
                 124,             # Colony: Mng, Spd, Crg
                 5,
-                210,                    # Ores
+                240,                    # Ores
             ]:
                 dpg.add_table_column(label="", width_fixed=True, init_width_or_weight=w)
         
         # Build table with initial blank values
         with dpg.table_row(parent="planet_tbl"):
-            for lbl in ["","","","","",""]:
+            for lbl in ["#","Planet"]:
+                dpg.add_text(lbl, color=C_ACCENT)
+            dpg.add_image(self._telescope, width=self._telescope_size[0], height=self._telescope_size[1])
+            for lbl in [" ","Manager","VPS"]:
                 dpg.add_text(lbl, color=C_ACCENT)
             
             # NextVPS header
@@ -2060,10 +2296,7 @@ class App:
         # ── header row 2: sub-column labels ──────────────────────────────────
         with dpg.table_row(parent="planet_tbl"):
             # columns 0-10: plain labels, no group heading
-            for lbl in ["#","Planet"]:
-                dpg.add_text(lbl, color=C_ACCENT)
-            dpg.add_image(self._telescope, width=self._telescope_size[0], height=self._telescope_size[1])
-            for lbl in [" ","Manager","VPS"]:
+            for lbl in ["","","","","",""]:
                 dpg.add_text(lbl, color=C_ACCENT)
             nvps_pow = self.prefs.get("next_vps_pow",0)
             exp_str = fmt_super(f"{nvps_pow:+03d}")
@@ -2091,11 +2324,17 @@ class App:
                                        tag=f"pla_{pid}_{stat}lvl",
                                        enabled=False,
                                        callback=self._cb_planet_lvl_edit)
-                    dpg.add_button(label="+",width=16,user_data=(pid,stat,1), callback=self._cb_planet_lvl)
+                    dpg.add_button(label="+",
+                                   width=16,
+                                   user_data=(pid,stat,1),
+                                   callback=self._cb_planet_lvl,
+                                   tag=f"pla_{pid}_{stat}lvl_btn")
 
             with dpg.table_row(parent="planet_tbl"):
                 dpg.add_text(pid, color=col, tag=f"pla_{pid}_pid")
-                dpg.add_text(bd["name"], color=col, tag=f"pla_{pid}_name")
+                with dpg.group(horizontal=True):
+                    dpg.add_image(f"Planet_{bd['name']}", tag=f"pla_{pid}_icon")
+                    dpg.add_text(bd["name"], color=col, tag=f"pla_{pid}_name")
                 dpg.add_text(scope, color=C_MUTED, tag=f"pla_{pid}_scope")
                 dpg.add_checkbox(default_value=False, user_data=pid,
                                  callback=self._cb_planet_owned,
@@ -2174,9 +2413,26 @@ class App:
                         #dpg.bind_item_theme(colony_input, "muted_input_text")
                     
                 dpg.add_text("")
-                dpg.add_text(ores, color=col, tag=f"pla_{pid}_ores")
+                #dpg.add_text(ores, color=col, tag=f"pla_{pid}_ores")
+                with dpg.group(horizontal=True, tag=f"pla_{pid}_ores_group"):
+                    for i, (k,v) in enumerate(bd["resources"].items()):
+                        img_name = f"Ore_{k}"
+                        dpg.add_image_button(texture_tag=img_name,
+                                             tag=f"pla_{pid}_ore{i}",
+                                             enabled=False,
+                                             tint_color=(150,150,150,200),
+                                             user_data=(pid,i),
+                                             callback=self._cb_planet_ore_priority)
+                        dpg.add_text(f"{v}%",
+                                     color=col,
+                                     tag=f"pla_{pid}_ore{i}_text")
 
-                                 
+    def _cb_planet_ore_priority(self, s, v, ud):
+        pid, i = ud
+        self.state["planets"][pid].update({"ore_pri": i})
+        save_state(self.state)
+        self._refresh_all()
+    
     def _cb_planet_global(self, s, v, ud):
         key = ud
         try: val = max(0.01, float(v))
@@ -2196,6 +2452,10 @@ class App:
             lvls = self.state["planets"][pid]["levels"]
             for k in lvls:
                 if lvls[k] == 0: lvls[k] = 1
+        else:
+            lvls = self.state["planets"][pid]["levels"]
+            for k in lvls:
+                lvls[k] = 0
         save_state(self.state)
         self._refresh_planets()
         self._refresh_ores()
@@ -2236,8 +2496,8 @@ class App:
         max_nvps = self.prefs.get("max_nvps",100)
         
         gm=global_bonuses["mining"]
-        gs=global_speed_bonus(self.state)
-        gc=global_cargo_bonus(self.state)
+        gs=global_bonuses["speed"]
+        gc=global_bonuses["cargo"]
 
         bm = beacon_bonus(pid,"mining",self.base,self.state)
         bs = beacon_bonus(pid,"speed", self.base,self.state)
@@ -2257,6 +2517,7 @@ class App:
         dpg.configure_item(f"pla_{pid}_pid", color=col)
         
         # Planet
+        dpg.configure_item(f"pla_{pid}_icon", tint_color=(255,255,255,255) if owned else (150,150,150,200) )
         dpg.configure_item(f"pla_{pid}_name", color=col)
         
         # Scope
@@ -2285,6 +2546,7 @@ class App:
         # M.Lvl
         dpg.set_value(f"pla_{pid}_mininglvl", ps["levels"]["mining"])
         dpg.configure_item(f"pla_{pid}_mininglvl", enabled=owned)
+        dpg.configure_item(f"pla_{pid}_mininglvl_btn", enabled=owned)
         
         # Ore/s
         dpg.set_value(f"pla_{pid}_ops", fmt(mr) if owned else "—")
@@ -2292,13 +2554,21 @@ class App:
         
         # Transport
         ts = _planet_transport(dist, sp, cg)
-        dpg.set_value(f"pla_{pid}_trans", fmt(ts))
-        dpg.configure_item(f"pla_{pid}_trans", 
-                           color=C_TEAL if ts > mr else C_WARN)
+        ts_max = _planet_transport(bd.get("distance_min", 1000), sp, cg)
+        ts_min = _planet_transport(bd.get("distance_max", 1e9), sp, cg)
+        
+        dpg.set_value(f"pla_{pid}_trans", fmt(ts) if owned else "—")
+        if owned:
+            dpg.configure_item(f"pla_{pid}_trans", 
+                               color=C_TEAL if ts_min > mr else (C_WARN if ts_max < mr else C_GOLD))
+        else:
+            dpg.configure_item(f"pla_{pid}_trans", 
+                               color=C_MUTED)
         
         # S.lvl
         dpg.set_value(f"pla_{pid}_speedlvl", ps["levels"]["speed"])
         dpg.configure_item(f"pla_{pid}_speedlvl", enabled=owned)
+        dpg.configure_item(f"pla_{pid}_speedlvl_btn", enabled=owned)
 
         # Speed
         dpg.set_value(f"pla_{pid}_speed", fmt(sp) if owned else "—")
@@ -2307,6 +2577,7 @@ class App:
         # C.Lvl
         dpg.set_value(f"pla_{pid}_cargolvl", ps["levels"]["cargo"])
         dpg.configure_item(f"pla_{pid}_cargolvl", enabled=owned)
+        dpg.configure_item(f"pla_{pid}_cargolvl_btn", enabled=owned)
         
         # Cargo
         dpg.set_value(f"pla_{pid}_cargo", fmt(cg) if owned else "—")
@@ -2322,6 +2593,21 @@ class App:
         for idx in range(3):
             dpg.set_value(f"pla_{pid}_colony{idx}", f"{colony[idx]:.2f}")
             dpg.bind_item_theme(f"pla_{pid}_colony{idx}", "muted_input_text" if colony[idx] == 1 else 0)
+        
+        # Ores
+        ore_p = _planet_ore_pri(pid, self.state, self.base)
+        for i, (k,v) in enumerate(bd["resources"].items()):
+            enable_logistics = _proj(self.state, "Cargo Logistics") and owned
+            dpg.configure_item(f"pla_{pid}_ore{i}", 
+                               enabled=enable_logistics,
+                               tint_color=(255,255,255,255) if enable_logistics else (150,150,150,200))
+            if ore_p == i:
+                dpg.bind_item_theme(f"pla_{pid}_ore{i}", "ore_priority")
+            else:
+                dpg.bind_item_theme(f"pla_{pid}_ore{i}", 0)
+            
+            dpg.configure_item(f"pla_{pid}_ore{i}_text", color=col)
+                              
 
     def _refresh_planets(self):
         # find the maximum next_vps, for number shading
@@ -2346,6 +2632,10 @@ class App:
         self.prefs.update({"next_vps_pow": new_pow})
         save_prefs(self.prefs)
         
+        # update global bonus strip
+        dpg.set_value("gmc", f"×{global_bonuses['mining']:.3f}")
+        dpg.set_value("gsc", f"×{global_bonuses['speed']:.3f}")
+        dpg.set_value("gcc", f"×{global_bonuses['cargo']:.3f}")
         
         for pid, bd in self.base["planets"].items():
             self._refresh_single_planet(pid)
@@ -2497,6 +2787,8 @@ class App:
                 mgr["planet"] = ""
                 new_state["managers"].append(mgr.copy())
                 
+            # Reload base data
+            self.base = load_base()
             
             self.state = copy.deepcopy(new_state)
             save_state(self.state)
