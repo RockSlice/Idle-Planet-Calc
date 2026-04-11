@@ -87,8 +87,8 @@ def default_state(base: dict) -> dict:
         planets[pid] = {
             "owned":  owned,
             "levels": {"mining": lvl, "speed": lvl, "cargo": lvl},
-            "probes": [1.0, 1.0, 1.0],
-            "colony": [1.0, 1.0, 1.0],
+            "probe":  {"m":1, "s":1, "c":1},
+            "colony": {"lvl":0, "m":1, "s":1, "c":1},
         }
     return {
         "ores":     {k: {"stars": 0, "market": 0}                     for k in base["ores"]},
@@ -107,6 +107,7 @@ def default_state(base: dict) -> dict:
         "managers": [],
         "station":  {},
         "base_updates": [],
+        "misc_bonuses": [],
     }
 
 def _deep_merge(fresh: dict, saved: dict):
@@ -200,7 +201,7 @@ def ore_mining_rate(ore: str, base: dict, state: dict) -> float:
         pct = base["planets"][pid]["resources"].get(ore, 0)
         if pct == 0: continue
         lvl   = ps["levels"]["mining"]
-        bonus = ps["probes"][0] * ps["colony"][0] * gm
+        bonus = ps["probe"]["m"] * ps["colony"]["m"] * gm
         total += _mining_rate(lvl, bonus) * (pct / 100.0)
     return total
     
@@ -278,6 +279,35 @@ def _planet_ore_pri(pid: str, state: dict, base: dict) -> int:
 
 def _proj(state, name): return state["projects"].get(name,{}).get("researched",False)
 
+def _get_probe_string(probe: dict):
+    pStr = ''
+    m = probe.get('m',1)
+    s = probe.get('s',1)
+    c = probe.get('c',1)
+    if m + s + c == 3:
+        return "—"
+    smb = probe.get("smb", 1) # Secondary manager bonus
+    pStr += "1/" if m == 1 else f"{m:.2f}/"
+    pStr += "1/" if s == 1 else f"{s:.2f}/"
+    pStr += "1" if c == 1 else f"{c:.2f} "
+    if smb != 1:
+        pStr += f"smb:{smb:.2f};"
+    return pStr
+     
+def _get_col_string(col: dict):
+    lvl = col.get('lvl',0)
+    if lvl == 0:
+        return "—"
+    m = col.get('m',1)
+    s = col.get('s',1)
+    c = col.get('c',1)
+    cStr = f"L{lvl}:"
+    cStr += "1/" if m == 1 else f"{m:.2f}/"
+    cStr += "1/" if s == 1 else f"{s:.2f}/"
+    cStr += "1" if c == 1 else f"{c:.2f}"
+    return cStr
+        
+    
 
 # ── global bonuses ─────────────────────────────────────────────────────────────
 
@@ -463,8 +493,10 @@ def manager_secondary_bonus(stat: str, state: dict) -> float:
         if not mgr.get("planet"):
             continue
         if mgr.get("secondary") == stat:
+            probe_smb = state["planets"][mgr["planet"]]["probe"].get("smb",1)
             stars = max(1, min(7, mgr.get("stars", 1)))
             total = total + (_MGR_SECONDARY.get(stat, [0.0]*7)[stars - 1]) - 1
+            total = ((total - 1) * probe_smb) +1
     gm = global_bonuses.get("manager_bonus", 1)        
     total = 1 + (gm * (total - 1))
     return total
@@ -547,12 +579,12 @@ def get_vps(pid: str, state, base, level=-1) -> float:
     bd = base["planets"][pid]
     ps = state["planets"][pid]
     lvl = ps["levels"]["mining"] if level < 0 else level
-    probe = ps["probes"]
+    probe = ps["probe"]
     colony = ps["colony"]
     bm = beacon_bonus(pid,"mining",base,state)
     mm = manager_primary_bonus(pid,"mining",state)
     gm=global_bonuses["mining"]
-    mb = probe[0]*colony[0]*bm*mm*gm
+    mb = probe["m"]*colony["m"]*bm*mm*gm
     mr = _mining_rate(lvl,mb)
     vps = 0
     for o,p in bd["resources"].items():
@@ -2071,11 +2103,12 @@ class App:
             if stat is None:
                 return
             bonuses = {"mining": 0.3, "speed": 0.6, "cargo": 0.6}
-            idx_map  = {"mining": 0,   "speed": 1,   "cargo": 2}
+            idx_map  = {"mining": "m",   "speed": "s",   "cargo": "c"}
             inc  = bonuses[stat]
             idx  = idx_map[stat]
             cur  = self.state["planets"][pid]["colony"][idx]
             self.state["planets"][pid]["colony"][idx] = round(cur + inc, 4)
+            self.state["planets"][pid]["colony"]["lvl"] += 1
             # Remove this colony row
             self.state["colonies"].pop(orig_idx)
             save_state(self.state)
@@ -2098,32 +2131,32 @@ class App:
                 dpg.add_button(label="Mining Rate",
                         width=110,
                         user_data="mining", callback=_apply)
-                dpg.add_text(f"{colony_state[0]:.2f}")
+                dpg.add_text(f"{colony_state['m']:.2f}")
                 dpg.add_image(self._arrow_right,
                         width=self._arrow_right_size[0],
                         height=self._arrow_right_size[1]
                         )
-                dpg.add_text(f"{colony_state[0] + 0.3:.2f}")
+                dpg.add_text(f"{colony_state['m'] + 0.3:.2f}")
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Ship Speed",
                             width=110,
                             user_data="speed",  callback=_apply)
-                dpg.add_text(f"{colony_state[1]:.2f}")
+                dpg.add_text(f"{colony_state['s']:.2f}")
                 dpg.add_image(self._arrow_right,
                         width=self._arrow_right_size[0],
                         height=self._arrow_right_size[1]
                         )
-                dpg.add_text(f"{colony_state[1] + 0.6:.2f}")
+                dpg.add_text(f"{colony_state['s'] + 0.6:.2f}")
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Ship Cargo",
                             width=110,
                             user_data="cargo",  callback=_apply)
-                dpg.add_text(f"{colony_state[2]:.2f}")
+                dpg.add_text(f"{colony_state['c']:.2f}")
                 dpg.add_image(self._arrow_right,
                         width=self._arrow_right_size[0],
                         height=self._arrow_right_size[1]
                         )
-                dpg.add_text(f"{colony_state[2] + 0.3:.2f}")
+                dpg.add_text(f"{colony_state['c'] + 0.3:.2f}")
             dpg.add_separator()
             dpg.add_button(label="Cancel", user_data=None, callback=_apply)
 
@@ -2259,10 +2292,8 @@ class App:
                 51,                     # Calculated transport speed
                 104,                 # Speed
                 104,                 # Cargo
-                124,             # Probe: Mng, Spd, Crg
-                5,
-                124,             # Colony: Mng, Spd, Crg
-                5,
+                180,             # Probe: Mng, Spd, Crg
+                160,             # Colony: Mng, Spd, Crg
                 240,                    # Ores
             ]:
                 dpg.add_table_column(label="", width_fixed=True, init_width_or_weight=w)
@@ -2285,12 +2316,10 @@ class App:
             #dpg.add_text("<----", color=C_TEAL)
             dpg.add_text("        Probes", color=C_TEAL)
             #dpg.add_text("---->", color=C_TEAL)  
-            dpg.add_text() #Divider
             # columns 14-16: "Colony" spanning
             #dpg.add_text("<----", color=C_TEAL)
             dpg.add_text("        Colony", color=C_TEAL)
             #dpg.add_text("---->", color=C_TEAL) 
-            dpg.add_text() #Divider
             dpg.add_text("")
             
         # ── header row 2: sub-column labels ──────────────────────────────────
@@ -2305,7 +2334,7 @@ class App:
                          tag="pla_nvps_exp")
             for lbl in ["","","",""]:
                 dpg.add_text(lbl, color=C_ACCENT)
-            for lbl in ["  M       S       C","","  M       S       C",""]:
+            for lbl in ["     M / S / C","     M / S / C"]:
                 dpg.add_text(lbl, color=C_MUTED)
             dpg.add_text("Ores", color=C_ACCENT)
             
@@ -2389,30 +2418,24 @@ class App:
                                      tag=f"pla_{pid}_cargo",
                                      color=col)
 
-                # Probe bonuses (cols 11-13)
+                # Probe bonuses
                 with dpg.group(horizontal=True):
-                    for idx in range(3):
-                        probe_input = dpg.add_input_text(default_value="1",width=38,
-                                           on_enter=True,
-                                           user_data=(pid,"probes",idx),
-                                           tag=f"pla_{pid}_probe{idx}",
-                                           callback=self._cb_planet_bonus_val)
-                        #dpg.bind_item_theme(probe_input, "muted_input_text")
+                    dpg.add_button(label='',
+                                   width=180,
+                                   tag=f"pla_{pid}_probe",
+                                   user_data=pid,
+                                   callback=self._cb_planet_probe_set)
                                        
                                        
                                     
-                dpg.add_text()
                 # Colony bonuses (cols 14-16)
                 with dpg.group(horizontal=True):
-                    for idx in range(3):
-                        colony_input = dpg.add_input_text(default_value=1,width=38,
-                                           on_enter=True,
-                                           user_data=(pid,"colony",idx),
-                                           tag=f"pla_{pid}_colony{idx}",
-                                           callback=self._cb_planet_bonus_val)
-                        #dpg.bind_item_theme(colony_input, "muted_input_text")
+                    dpg.add_button(label='',
+                                   width=160,
+                                   tag=f"pla_{pid}_colony",
+                                   user_data=pid,
+                                   callback=self._cb_planet_colony_set)
                     
-                dpg.add_text("")
                 #dpg.add_text(ores, color=col, tag=f"pla_{pid}_ores")
                 with dpg.group(horizontal=True, tag=f"pla_{pid}_ores_group"):
                     for i, (k,v) in enumerate(bd["resources"].items()):
@@ -2426,6 +2449,126 @@ class App:
                         dpg.add_text(f"{v}%",
                                      color=col,
                                      tag=f"pla_{pid}_ore{i}_text")
+                                    
+    def _cb_planet_probe_set(self, s, v, ud):
+        pid = ud
+        ps = self.state["planets"].get(pid,{})
+        pb = self.base["planets"].get(pid,{})
+        probe = ps.get("probe",{})
+        lvl = probe.get("lvl",0)
+        m = probe.get("m",1)
+        s = probe.get("s",1)
+        c = probe.get("c",1)
+        smb = probe.get("smb",1)
+        name = pb.get("name","")
+        
+        def _cb_pla_pro_apply(sender):
+            m = dpg.get_value("pla_pro_dlg_m")
+            s = dpg.get_value("pla_pro_dlg_s")
+            c = dpg.get_value("pla_pro_dlg_c")
+            smb = dpg.get_value("pla_pro_dlg_smb")
+            new_probe = {
+                "m": m,
+                "s": s,
+                "c": c,
+                "smb": smb}
+            self.state["planets"][pid].update({"probe":new_probe})
+            save_state(self.state)
+            dpg.delete_item("pla_pro_dlg")
+            self._refresh_all()
+        
+        with dpg.window(label=f"Set probe bonuses for {pid}:{name}",
+                        modal=True,
+                        pos=dpg.get_mouse_pos(local=False),
+                        width=300,
+                        tag="pla_pro_dlg"):
+            with dpg.group(horizontal=True):
+                dpg.add_text(" Mining Rate: ")
+                dpg.add_input_float(default_value=m,
+                                    on_enter=True,
+                                    width=150,
+                                    tag="pla_pro_dlg_m")
+            with dpg.group(horizontal=True):
+                dpg.add_text("  Ship Speed: ")
+                dpg.add_input_float(default_value=s,
+                                    on_enter=True,
+                                    width=150,
+                                    tag="pla_pro_dlg_s")
+            with dpg.group(horizontal=True):
+                dpg.add_text("       Cargo: ")
+                dpg.add_input_float(default_value=c,
+                                    on_enter=True,
+                                    width=150,
+                                    tag="pla_pro_dlg_c")
+            with dpg.group(horizontal=True):
+                dpg.add_text("Mgr Secondary: ")
+                dpg.add_input_float(default_value=smb,
+                                    on_enter=True,
+                                    width=150,
+                                    tag="pla_pro_dlg_smb")
+            dpg.add_button(label="Apply",callback=_cb_pla_pro_apply)   
+
+
+    def _cb_planet_colony_set(self, s, v, ud):
+        pid = ud
+        ps = self.state["planets"].get(pid,{})
+        pb = self.base["planets"].get(pid,{})
+        colony = ps.get("colony",{})
+        lvl = colony.get("lvl",0)
+        m = colony.get("m",0)
+        s = colony.get("s",0)
+        c = colony.get("c",0)
+        name = pb.get("name","")
+        
+        def _cb_pla_col_apply(sender):
+            lvl = dpg.get_value("pla_col_dlg_lvl")
+            m = dpg.get_value("pla_col_dlg_m")
+            s = dpg.get_value("pla_col_dlg_s")
+            c = dpg.get_value("pla_col_dlg_c")
+            new_col = {
+                "lvl": lvl,
+                "m": m,
+                "s": s,
+                "c": c}
+            self.state["planets"][pid].update({"colony":new_col})
+            save_state(self.state)
+            dpg.delete_item("pla_col_dlg")
+            self._refresh_all()
+        
+        with dpg.window(label=f"Set colony level for {pid}:{name}",
+                        modal=True,
+                        pos=dpg.get_mouse_pos(local=False),
+                        width=300,
+                        tag="pla_col_dlg"):
+            with dpg.group(horizontal=True):
+                dpg.add_text("Colony Level: ")
+                dpg.add_input_int(default_value=lvl,
+                                  min_value=0,
+                                  width=150,
+                                  min_clamped=True,
+                                  on_enter=True,
+                                  tag="pla_col_dlg_lvl")
+            with dpg.group(horizontal=True):
+                dpg.add_text(" Mining Rate: ")
+                dpg.add_input_float(default_value=m,
+                                    on_enter=True,
+                                    width=150,
+                                    tag="pla_col_dlg_m")
+            with dpg.group(horizontal=True):
+                dpg.add_text("  Ship Speed: ")
+                dpg.add_input_float(default_value=s,
+                                    on_enter=True,
+                                    width=150,
+                                    tag="pla_col_dlg_s")
+            with dpg.group(horizontal=True):
+                dpg.add_text("       Cargo: ")
+                dpg.add_input_float(default_value=c,
+                                    on_enter=True,
+                                    width=150,
+                                    tag="pla_col_dlg_c")
+            dpg.add_button(label="Apply",callback=_cb_pla_col_apply)   
+                                 
+        
 
     def _cb_planet_ore_priority(self, s, v, ud):
         pid, i = ud
@@ -2490,7 +2633,9 @@ class App:
         bd = self.base["planets"][pid]
         ps = self.state["planets"][pid]
         owned = ps["owned"]; lvls = ps["levels"]
-        probe = ps["probes"]; colony = ps["colony"]
+        # probe = ps["probes"]; colony = ps["colony"]
+        probe = ps.get("probe",{"m":1, "s":1, "c":1})
+        colony = ps.get("colony",{"lvl":0, "m":1, "s":1, "c":1})
         dist = self.base["planets"][pid]["distance"]
         next_vps_pow = self.prefs.get("next_vps_pow",0)
         max_nvps = self.prefs.get("max_nvps",100)
@@ -2505,9 +2650,9 @@ class App:
         mm = manager_primary_bonus(pid,"mining",self.state)
         ms = manager_primary_bonus(pid,"speed", self.state)
         mc = manager_primary_bonus(pid,"cargo", self.state)
-        mb = probe[0]*colony[0]*bm*mm*gm
-        sb = probe[1]*colony[1]*bs*ms*gs
-        cb = probe[2]*colony[2]*bc*mc*gc
+        mb = probe["m"]*colony["m"]*bm*mm*gm
+        sb = probe["s"]*colony["s"]*bs*ms*gs
+        cb = probe["c"]*colony["c"]*bc*mc*gc
         mr = _mining_rate(lvls["mining"],mb) if owned else 0
         sp = _ship_speed( lvls["speed"], sb) if owned else 0
         cg = _ship_cargo( lvls["cargo"], cb) if owned else 0
@@ -2584,15 +2729,21 @@ class App:
         dpg.configure_item(f"pla_{pid}_cargo", color=col)
 
         # Probes
-        for idx in range(3):
-            dpg.set_value(f"pla_{pid}_probe{idx}", f"{probe[idx]:.2f}")
-            dpg.bind_item_theme(f"pla_{pid}_probe{idx}", "muted_input_text" if probe[idx] == 1 else 0)
+        dpg.configure_item(f"pla_{pid}_probe", 
+                           label=_get_probe_string(probe),
+                           enabled=owned)
+        #for idx in ["m","s","c"]:
+        #    dpg.set_value(f"pla_{pid}_probe{idx}", f"{probe[idx]:.2f}")
+        #    dpg.bind_item_theme(f"pla_{pid}_probe{idx}", "muted_input_text" if probe[idx] == 1 else 0)
                 
         
         # Colony
-        for idx in range(3):
-            dpg.set_value(f"pla_{pid}_colony{idx}", f"{colony[idx]:.2f}")
-            dpg.bind_item_theme(f"pla_{pid}_colony{idx}", "muted_input_text" if colony[idx] == 1 else 0)
+        dpg.configure_item(f"pla_{pid}_colony", 
+                           label=_get_col_string(colony),
+                           enabled=owned)
+        #for idx in ["m","s","c"]:
+        #    dpg.set_value(f"pla_{pid}_colony{idx}", f"{colony[idx]:.2f}")
+        #    dpg.bind_item_theme(f"pla_{pid}_colony{idx}", "muted_input_text" if colony[idx] == 1 else 0)
         
         # Ores
         ore_p = _planet_ore_pri(pid, self.state, self.base)
@@ -3033,6 +3184,36 @@ class App:
         save_prefs(self.prefs)
         self._refresh_station()
             
+    # ──── MISC ─────────────────────        
+    
+    def _tab_misc(self):
+        with dpg.group(horizontal=True):
+            dpg.add_button(label="+ Add Misc Bonus", callback=self._cb_misc_add)
+        with dpg.table(
+            tag="misc_tbl", header_row=True, row_background=True,
+            borders_innerH=True, borders_outerH=True,
+            borders_innerV=True, borders_outerV=True,
+            scrollY=True, scrollX=True, resizable=True,
+            policy=dpg.mvTable_SizingFixedFit, freeze_rows=1
+        ):
+            for lbl, w in [
+                ("",85), ("Name",150), ("Target Type", 140), ("Target"),
+                ("Stat", 120), ("Bonus",100)
+            ]:  
+                dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
+                
+    def _refresh_misc(self):
+        dpg.delete_item("misc_tbl", children_only=True, slot=1)
+        misc_items = self.state.get("misc_bonuses", [])
+        max_idx = len(misc_items) - 1
+        for idx, m_item in enumerate(misc_items):
+            name = m_item("name", f"Misc bonus {idx}")
+            target_type = m_item("target_type", "global")
+            target = m_item("target", "global")
+            stat = m_item("stat", "")
+            bonus = m_item("bonus", 1)
+    
+    # ─────────────────────────
 
     def _refresh_all(self):
         calculate_global_bonuses(self.base, self.state)
