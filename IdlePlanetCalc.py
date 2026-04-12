@@ -205,6 +205,26 @@ def ore_mining_rate(ore: str, base: dict, state: dict) -> float:
         total += _mining_rate(lvl, bonus) * (pct / 100.0)
     return total
     
+def _planet_mining_rate(pid: str, base: dict, state: dict) -> float:
+    total = 0.0
+    gm = global_bonuses["mining"]
+    ps = state["planets"][pid]
+    if not ps["owned"]: return 0
+
+    lvls = ps["levels"]
+    probe = ps.get("probe",{"m":1})
+    colony = ps.get("colony",{"m":1})
+    bm = beacon_bonus(pid,"mining",base,state)
+    mm = manager_primary_bonus(pid,"mining",state)
+    mb = probe["m"]*colony["m"]*bm*mm*gm
+    ore_p = _planet_ore_pri(pid, state, base)
+    mr = _mining_rate(lvls["mining"],mb)
+    for i,(ore,pct) in enumerate(base["planets"][pid]["resources"].items()):
+        if i == ore_p:
+            pct += 15
+        total += mr * pct / 100
+    return total
+    
 def _ore_sell_rate(ore: str, base: dict, state: dict) -> float:
     # Returns the ore_mining_rate minus the amount used on the primary alloy in one smelter
     # Includes a 10% buffer
@@ -2653,7 +2673,8 @@ class App:
         mb = probe["m"]*colony["m"]*bm*mm*gm
         sb = probe["s"]*colony["s"]*bs*ms*gs
         cb = probe["c"]*colony["c"]*bc*mc*gc
-        mr = _mining_rate(lvls["mining"],mb) if owned else 0
+        #mr = _mining_rate(lvls["mining"],mb) if owned else 0
+        mr = _planet_mining_rate(pid, self.base, self.state) if owned else 0
         sp = _ship_speed( lvls["speed"], sb) if owned else 0
         cg = _ship_cargo( lvls["cargo"], cb) if owned else 0
         col   = C_TEXT if owned else (85,85,112,255)
