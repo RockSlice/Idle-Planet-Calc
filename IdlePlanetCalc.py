@@ -220,7 +220,7 @@ def _planet_mining_rate(pid: str, base: dict, state: dict) -> float:
     ore_p = _planet_ore_pri(pid, state, base)
     mr = _mining_rate(lvls["mining"],mb)
     for i,(ore,pct) in enumerate(base["planets"][pid]["resources"].items()):
-        if i == ore_p:
+        if (_proj(state, "Ore Targeting")) and (i == ore_p):
             pct += 15
         total += mr * pct / 100
     return total

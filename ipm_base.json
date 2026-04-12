@@ -170,7 +170,7 @@
   "planets": {
     "1":  {"name": "Balor",      "distance_min":2497, "distance_max":2499,"distance": 2501,  "base_price": 100,      "telescope": 0,  "resources": {"Copper": 100}},
     "2":  {"name": "Drasta",     "distance_min":2643, "distance_max":2643,"distance": 2643,  "base_price": 200,      "telescope": 0,  "resources": {"Copper": 80, "Iron": 20}},
-    "3":  {"name": "Anadius",    "distance_min":2643, "distance_max":2651,"distance": 2649,  "base_price": 500,      "telescope": 0,  "resources": {"Copper": 50, "Iron": 50}},
+    "3":  {"name": "Anadius",    "distance_min":2643, "distance_max":2649,"distance": 2646,  "base_price": 500,      "telescope": 0,  "resources": {"Copper": 50, "Iron": 50}},
     "4":  {"name": "Dholen",     "distance_min":2629, "distance_max":2649,"distance": 2645,  "base_price": 1250,     "telescope": 0,  "resources": {"Iron": 80, "Lead": 20}},
     "5":  {"name": "Verr",       "distance_min":2764, "distance_max":2781,"distance": 2773,  "base_price": 5e3,      "telescope": 1,  "resources": {"Lead": 50, "Iron": 30, "Copper": 20}},
     "6":  {"name": "Newton",     "distance_min":2901, "distance_max":2917,"distance": 2919,  "base_price": 9e3,      "telescope": 1,  "resources": {"Lead": 100}},
