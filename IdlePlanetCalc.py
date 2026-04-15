@@ -365,6 +365,7 @@ gb_descriptions = {
     "item_val": "Item Value",
     "alloy_and_item_val": "Alloy and Item Value",
     "ast_val": "Asteroid Value",
+    "ast_time": "Time between asteroids",
     "deb_val": "Debris Value",
     "ast_and_deb_val": "Asteroid and Debris Value",
     "cargo": "Cargo",       
@@ -607,15 +608,73 @@ def get_vps(pid: str, state, base, level=-1) -> float:
     mb = probe["m"]*colony["m"]*bm*mm*gm
     mr = _mining_rate(lvl,mb)
     vps = 0
-    for o,p in bd["resources"].items():
+    ore_p = _planet_ore_pri(pid, state, base)
+    for i, (o,p) in enumerate(bd["resources"].items()):
         ore_state = state["ores"][o]
         mkt = ore_state.get("market",0)
         stars = ore_state.get("stars",0)
         bp = base["ores"][o]["base_price"]
         rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
+        if (_proj(state, "Ore Targeting")) and (i == ore_p):
+            p += 15
         vps += rp * mr * p / 100
     return vps
 
+def _get_ast_vps(base: dict, state: dict):
+    a_time = 3600 #default time between asteroid is 10 minutes
+    a_time *= global_bonuses.get("ast_time",1)
+    # from the wiki:
+    # * No ore backlog
+    # * Only the base value of the ores from that planet are considered (no stars, no market, no ships, etc).
+    base_tvps = 0
+    for pid, pb in base["planets"].items():
+        ps = state["planets"].get(pid,{})
+        if not ps["owned"]: continue
+        lvl = ps["levels"]["mining"]
+        probe = ps["probe"]
+        colony = ps["colony"]
+        bm = beacon_bonus(pid,"mining",base,state)
+        mm = manager_primary_bonus(pid,"mining",state)
+        gm=global_bonuses["mining"]
+        mb = probe["m"]*colony["m"]*bm*mm*gm
+        mr = _mining_rate(lvl,mb)
+        vps = 0
+        ore_p = _planet_ore_pri(pid, state, base)
+        for i, (o,p) in enumerate(pb["resources"].items()):
+            ore_state = state["ores"][o]
+            bp = base["ores"][o]["base_price"]
+            if (_proj(state, "Ore Targeting")) and (i == ore_p):
+                p += 15
+            vps += bp * mr * p / 100
+        base_tvps += vps
+    # "The nominal size for an asteroid is roughly around 130x of your VPS"
+    ast_base = base_tvps * 130
+    ast_base *= global_bonuses["ast_val"] * global_bonuses["ast_and_deb_val"]
+    debug_str = f"Base asteroid value: $ {fmt(ast_base)}"
+    #print(debug_str)
+    r_ast_base = 0
+    if _proj(state, "Asteroid Refined Drilling"):
+        # "10% chance of an asteroid containing 20x normal value worth of alloy"
+        r_ast_base = ast_base * 20
+    
+    # Now that we have the *base* value, we need to adjust for the *actual* value (with stars, market, etc...)
+    ore_price_ratios = []
+    for ore, bd in base["ores"].items():
+        if not ore_unlocked(ore, base, state):
+            continue
+        st = state["ores"][ore]
+        stars = st.get("stars",0)
+        mkt = st.get("market",0)
+        ore_price_ratios.append([0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars))
+    opr = 0
+    for r in ore_price_ratios:
+        opr += r / len(ore_price_ratios)
+    ast_val = ast_base * opr
+    debug_str = f"Actual avg asteroid value: $ {fmt(ast_val)}"
+    #print(debug_str)
+    
+    return 2.9 * ast_val / a_time
+    
 
 def get_next_vps_per(pid: str, level: int, vps: float, base: dict, state: dict) -> float:
     bp = base["planets"][pid]["base_price"]
@@ -1135,6 +1194,8 @@ class App:
             tvps = 0
             dpg.add_text("Total Ore VPS: ", color=C_TEXT)
             dpg.add_text(f"$ {fmt(tvps)}", color=C_TEAL, tag="dash_tvps")
+            dpg.add_text("   Est. Asteroid VPS: ", color=C_TEXT)
+            dpg.add_text(f"$ {0}", color=C_TEAL, tag="dash_ast_vps")
 
         with dpg.table(tag="dash_tbl", header_row=True, row_background=True,
                        borders_innerH=True, borders_outerH=True,
@@ -1157,6 +1218,7 @@ class App:
                 vps = get_vps(pid, self.state, self.base)
                 tvps += vps
         dpg.set_value("dash_tvps", f"$ {fmt(tvps)}")
+        dpg.set_value("dash_ast_vps", f"$ {fmt(_get_ast_vps(self.base, self.state))}")
     
         rows  = [r for r in rows if r["unlocked"]]
         rows.sort(key=lambda r: r.get(sort,0), reverse=True)
@@ -1871,8 +1933,7 @@ class App:
         sec_disp = self._mgr_secondary_display(mgr["secondary"], si)
         if dpg.does_item_exist(f"mgr_sec_eff_{idx}"):
             dpg.set_value(f"mgr_sec_eff_{idx}", sec_disp)
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_mgr_primary(self, s, v, ud):
         try: key = self._PRIMARY_KEYS[self._PRIMARY_OPTS.index(v)]
@@ -1882,8 +1943,7 @@ class App:
         if dpg.does_item_exist(f"mgr_pri_eff_{ud}"):
             dpg.set_value(f"mgr_pri_eff_{ud}", f"x{self._mgr_primary_mult(key,stars):.2f}")
         save_state(self.state)
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_mgr_secondary(self, s, v, ud):
         try: key = self._SECONDARY_KEYS[self._SECONDARY_OPTS.index(v)]
@@ -2105,9 +2165,7 @@ class App:
         orig_idx = ud
         self.state["colonies"].pop(orig_idx)
         save_state(self.state)
-        self._refresh_colonies()
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
         
         
     def _cb_col_complete(self, s, v, ud):
@@ -2132,9 +2190,7 @@ class App:
             # Remove this colony row
             self.state["colonies"].pop(orig_idx)
             save_state(self.state)
-            self._refresh_colonies()
-            self._refresh_planets()
-            self._refresh_dashboard()
+            self._refresh_all()
 
         vp_w = dpg.get_viewport_client_width()
         vp_h = dpg.get_viewport_client_height()
@@ -2274,8 +2330,7 @@ class App:
         if dpg.does_item_exist(tag):
             dpg.set_value(tag, f"{val:.2f}")
         save_state(self.state)
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_beacon_inc(self, s, v, ud):
         key, stat, inc = ud
@@ -2287,8 +2342,7 @@ class App:
         if dpg.does_item_exist(tag):
             dpg.set_value(tag, f"{val:.2f}")
         save_state(self.state)
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     # ── PLANETS ────────────────────────────────────────────────────────────────
     def _tab_planets(self):
@@ -2620,25 +2674,20 @@ class App:
             for k in lvls:
                 lvls[k] = 0
         save_state(self.state)
-        self._refresh_planets()
-        self._refresh_ores()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_planet_lvl(self, s, v, ud):
         pid, stat, delta = ud
         cur = self.state["planets"][pid]["levels"][stat]
         self.state["planets"][pid]["levels"][stat] = max(1, cur+delta)
         save_state(self.state)
-        self._refresh_planets()
-        #self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_planet_lvl_edit(self, s, v, ud):
         pid, stat = ud
         self.state["planets"][pid]["levels"][stat] = max(1, int(v))
         save_state(self.state)
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_planet_bonus_val(self, s, v, ud):
         pid, group, idx = ud
@@ -2646,8 +2695,7 @@ class App:
         except: return
         self.state["planets"][pid][group][idx] = val
         save_state(self.state)
-        self._refresh_planets()
-        self._refresh_dashboard()
+        self._refresh_all()
     
     def _refresh_single_planet(self, pid:str):
         bd = self.base["planets"][pid]
@@ -2687,6 +2735,9 @@ class App:
         dpg.configure_item(f"pla_{pid}_name", color=col)
         
         # Scope
+        scope = bd.get("telescope", 0)
+        dpg.configure_item(f"pla_{pid}_scope", color=C_TEXT if self._beacon_unlocked(scope) else C_MUTED)
+        
         # Owned
         dpg.set_value(f"pla_{pid}_owned", owned)
         
@@ -2873,14 +2924,14 @@ class App:
             new_tex = self._star_tex
         dpg.configure_item(img_tag, texture_tag=new_tex)
         self._update_price_label(cat, name)
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_market(self, s, v, ud):
         cat, name, _ = ud
         self.state[cat][name]["market"] = int(v)
         save_state(self.state)
         self._update_price_label(cat, name)
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_market_adj(self, s, v, ud):
         """Called by − / + buttons around the chevron image."""
@@ -2897,7 +2948,7 @@ class App:
         elif dpg.does_item_exist(img_tag):
             dpg.set_value(img_tag, str(new_mkt))
         self._update_price_label(cat, name)
-        self._refresh_dashboard()
+        self._refresh_all()
 
     def _cb_unlocked(self, s, v, ud):
         cat, name, _ = ud
@@ -3064,7 +3115,6 @@ class App:
         else:
             rooms_state[name] = 0
         save_state(self.state)
-        self._refresh_rooms()
         # Rooms affect global bonuses — refresh everything that uses them
         self._refresh_all()
 
