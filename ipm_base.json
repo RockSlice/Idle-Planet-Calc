@@ -170,8 +170,8 @@
     "Telescope 10":      {"recipe": {"Thermal Scanner":3, "Palladium Bar":10},   "prereq": "Telescope 9"},
     "Telescope 11":      {"recipe": {"Advanced Computer":3, "Osmium Bar":10},   "prereq": "Telescope 10"},
     "Telescope 12":      {"recipe": {"Navigation Module":3, "Rhodium Bar":10},   "prereq": "Telescope 11"},
-    "Telescope 13":      {"recipe": {"Radio Tower":3, "Inerton Bar":10},   "prereq": "Telescope 12"},
-    "Telescope 14":      {"recipe": {"Satellite Dish":3, "Quadium Bar":10},   "prereq": "Telescope 13"},
+    "Telescope 13":      {"recipe": {"Radio Tower":3, "Inerton Alloy":10},   "prereq": "Telescope 12"},
+    "Telescope 14":      {"recipe": {"Satellite Dish":3, "Quadium Alloy":10},   "prereq": "Telescope 13"},
     "Telescope 15":      {"recipe": {"Motor":3, "Scrith Alloy":10},   "prereq": "Telescope 14"},
     "Telescope 16":      {"recipe": {"Accumulator":3, "Uru Alloy":10},   "prereq": "Telescope 15"},
     "Telescope 17":      {"recipe": {"Nuclear Capsule":3, "Vibranium Alloy":10},   "prereq": "Telescope 16"},
@@ -180,7 +180,7 @@
     "Telescope 20":      {"recipe": {"Collider":3, "Xynium Alloy":10},   "prereq": "Telescope 19"},
     "Telescope 21":      {"recipe": {"Gravity Chamber":3, "Quolium Alloy":10},   "prereq": "Telescope 20"},
     "Telescope 22":      {"recipe": {"Robot":3, "Luterium Alloy":10},   "prereq": "Telescope 21"},
-    "Telescope 23":      {"recipe": {"Fusion Capsules":3, "Wraith Alloy":10},   "prereq": "Telescope 22"}
+    "Telescope 23":      {"recipe": {"Fusion Capsule":3, "Wraith Alloy":10},   "prereq": "Telescope 22"}
   },
   "planets": {
     "1":  {"name": "Balor",      "distance_min":2497, "distance_max":2499,"distance": 2498,  "base_price": 100,      "telescope": 0,  "resources": {"Copper": 100}},

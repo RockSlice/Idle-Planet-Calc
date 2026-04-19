@@ -556,6 +556,9 @@ def manager_secondary_bonus(stat: str, state: dict) -> float:
     return total
 
 # ── time helpers ───────────────────────────────────────────────────────────────
+def _delete_modal_callback(sender):
+    dpg.delete_item(sender)
+
 def total_smelt_time(name, cat, base, state):
     e   = base[cat][name]
     own = e["smelt_time"] if cat=="alloys" else 0.0
@@ -762,6 +765,8 @@ def get_next_vps_per(pid: str, level: int, vps: float, base: dict, state: dict) 
         next_vps  = get_vps(pid, state, base, level + 1) - get_vps(pid, state, base, level)
         return next_vps / next_cost
 
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Application
 # ═════════════════════════════════════════════════════════════════════════════
@@ -778,6 +783,7 @@ class App:
         self._theme()
 
         with dpg.window(tag="main", no_title_bar=True, no_move=True,
+                        on_close=_delete_modal_callback,
                         no_resize=True, no_scrollbar=True):
             self._hdr()
             dpg.add_separator()
@@ -1171,8 +1177,13 @@ class App:
                 dpg.add_theme_style(dpg.mvStyleVar_FrameBorderSize, 2)
                 dpg.add_theme_color(dpg.mvThemeCol_Border, C_GOLD)
                                 
-            
-
+        with dpg.theme(tag="right_align"):
+            with dpg.theme_component(dpg.mvSelectable):
+                dpg.add_theme_style(dpg.mvStyleVar_SelectableTextAlign,1.0, 0.5)
+                dpg.add_theme_color(dpg.mvThemeCol_Header, [0,0,0,0])
+                dpg.add_theme_color(dpg.mvThemeCol_HeaderHovered, [0,0,0,0])
+                dpg.add_theme_color(dpg.mvThemeCol_HeaderActive, [0,0,0,0])
+        
     def _resize(self, *_):
         w = dpg.get_viewport_client_width()
         h = dpg.get_viewport_client_height()
@@ -1542,7 +1553,7 @@ class App:
                        borders_innerV=True, borders_outerV=True,
                        scrollY=True, scrollX=True, resizable=True,
                        policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
-            for lbl, w in [("",28),("Project",200),("Cost",110),("Time",82),
+            for lbl, w in [("",28),("Project",290),("Cost",110),("Time",82),
                             ("Ingredients",320),("Prereq",270)]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
@@ -1655,6 +1666,7 @@ class App:
 
         with dpg.window(label=f"{proj}",
                         modal=True,
+                        on_close=_delete_modal_callback,
                         tag="proj_alchemy_dlg",
                         width=dlg_w, height=dlg_h, pos=(px, py)):
             dpg.add_text("Select planet:")
@@ -2271,6 +2283,7 @@ class App:
 
         with dpg.window(label=f"Complete Colony – {planet_name}",
                         modal=True, tag="col_bonus_dlg",
+                        on_close=_delete_modal_callback,
                         width=dlg_w, height=dlg_h, pos=(px, py)):
             dpg.add_text("Apply bonus to:")
             with dpg.group(horizontal=True):
@@ -2632,31 +2645,40 @@ class App:
                         modal=True,
                         pos=dpg.get_mouse_pos(local=False),
                         width=300,
+                        on_close=_delete_modal_callback,
                         tag="pla_pro_dlg"):
-            with dpg.group(horizontal=True):
-                dpg.add_text(" Mining Rate: ")
-                dpg.add_input_float(default_value=m,
-                                    on_enter=True,
-                                    width=150,
-                                    tag="pla_pro_dlg_m")
-            with dpg.group(horizontal=True):
-                dpg.add_text("  Ship Speed: ")
-                dpg.add_input_float(default_value=s,
-                                    on_enter=True,
-                                    width=150,
-                                    tag="pla_pro_dlg_s")
-            with dpg.group(horizontal=True):
-                dpg.add_text("       Cargo: ")
-                dpg.add_input_float(default_value=c,
-                                    on_enter=True,
-                                    width=150,
-                                    tag="pla_pro_dlg_c")
-            with dpg.group(horizontal=True):
-                dpg.add_text("Mgr Secondary: ")
-                dpg.add_input_float(default_value=smb,
-                                    on_enter=True,
-                                    width=150,
-                                    tag="pla_pro_dlg_smb")
+            with dpg.table(header_row=False):
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=120)
+                dpg.add_table_column()
+                
+                with dpg.table_row():
+                    t = dpg.add_selectable(label="Mining Rate: ")
+                    dpg.bind_item_theme(t, "right_align")
+                    dpg.add_input_float(default_value=m,
+                                        on_enter=True,
+                                        width=115,
+                                        tag="pla_pro_dlg_m")
+                with dpg.table_row():
+                    t = dpg.add_selectable(label="Ship Speed: ")
+                    dpg.bind_item_theme(t, "right_align")
+                    dpg.add_input_float(default_value=s,
+                                        on_enter=True,
+                                        width=115,
+                                        tag="pla_pro_dlg_s")
+                with dpg.table_row():
+                    t = dpg.add_selectable(label="Cargo: ")
+                    dpg.bind_item_theme(t, "right_align")
+                    dpg.add_input_float(default_value=c,
+                                        on_enter=True,
+                                        width=115,
+                                        tag="pla_pro_dlg_c")
+                with dpg.table_row():
+                    t = dpg.add_selectable(label="Mgr Secondary: ")
+                    dpg.bind_item_theme(t, "right_align")
+                    dpg.add_input_float(default_value=smb,
+                                        on_enter=True,
+                                        width=115,
+                                        tag="pla_pro_dlg_smb")
             dpg.add_button(label="Apply",callback=_cb_pla_pro_apply)   
 
 
@@ -2688,35 +2710,44 @@ class App:
         
         with dpg.window(label=f"Set colony level for {pid}:{name}",
                         modal=True,
+                        on_close=_delete_modal_callback,
                         pos=dpg.get_mouse_pos(local=False),
                         width=300,
                         tag="pla_col_dlg"):
-            with dpg.group(horizontal=True):
-                dpg.add_text("Colony Level: ")
-                dpg.add_input_int(default_value=lvl,
-                                  min_value=0,
-                                  width=150,
-                                  min_clamped=True,
-                                  on_enter=True,
-                                  tag="pla_col_dlg_lvl")
-            with dpg.group(horizontal=True):
-                dpg.add_text(" Mining Rate: ")
-                dpg.add_input_float(default_value=m,
-                                    on_enter=True,
-                                    width=150,
-                                    tag="pla_col_dlg_m")
-            with dpg.group(horizontal=True):
-                dpg.add_text("  Ship Speed: ")
-                dpg.add_input_float(default_value=s,
-                                    on_enter=True,
-                                    width=150,
-                                    tag="pla_col_dlg_s")
-            with dpg.group(horizontal=True):
-                dpg.add_text("       Cargo: ")
-                dpg.add_input_float(default_value=c,
-                                    on_enter=True,
-                                    width=150,
-                                    tag="pla_col_dlg_c")
+            with dpg.table(header_row=False):
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=120)
+                dpg.add_table_column()
+                
+                with dpg.table_row():
+                    t = dpg.add_selectable(label="Colony Level: ")
+                    dpg.bind_item_theme(t, "right_align")
+                    dpg.add_input_int(default_value=lvl,
+                                      min_value=0,
+                                      width=115,
+                                      min_clamped=True,
+                                      on_enter=True,
+                                      tag="pla_col_dlg_lvl")
+                with dpg.table_row():
+                    t = dpg.add_selectable(label="Mining Rate: ")
+                    dpg.bind_item_theme(t, "right_align")
+                    dpg.add_input_float(default_value=m,
+                                        on_enter=True,
+                                        width=115,
+                                        tag="pla_col_dlg_m")
+                with dpg.table_row():
+                    t = dpg.add_selectable(label="Ship Speed: ")
+                    dpg.bind_item_theme(t, "right_align")
+                    dpg.add_input_float(default_value=s,
+                                        on_enter=True,
+                                        width=115,
+                                        tag="pla_col_dlg_s")
+                with dpg.table_row():
+                    t = dpg.add_selectable(label="Cargo: ")
+                    dpg.bind_item_theme(t, "right_align")
+                    dpg.add_input_float(default_value=c,
+                                        on_enter=True,
+                                        width=115,
+                                        tag="pla_col_dlg_c")
             dpg.add_button(label="Apply",callback=_cb_pla_col_apply)   
                                  
         
@@ -3076,6 +3107,7 @@ class App:
             save_state(self.state)
             self._refresh_all()
         with dpg.window(label="Reset?", modal=True, tag="reset_dlg",
+                        on_close=_delete_modal_callback,
                         width=340, height=110, pos=(540,360)):
             dpg.add_text("Reset ALL data to defaults? Cannot be undone.")
             with dpg.group(horizontal=True):
@@ -3109,6 +3141,7 @@ class App:
             save_state(self.state)
             self._refresh_all()
         with dpg.window(label="Sell Galaxy?", modal=True, tag="sell_dlg",
+                        on_close=_delete_modal_callback,
                         width=360, height=130, pos=(540,360)):
             dpg.add_text("Start a new galaxy?")
             with dpg.group(horizontal=True):
