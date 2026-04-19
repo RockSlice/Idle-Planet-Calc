@@ -180,15 +180,23 @@ def save_prefs(prefs: dict):
 
 # ── price (always computed, never cached) ─────────────────────────────────────
 def effective_price(name: str, base: dict, state: dict) -> float:
+    stat_lookup = {
+        "ores": "ore_val",
+        "alloys": "alloy_val",
+        "items": "item_val"
+    }
     for cat in ("ores","alloys","items"):
         if name in base[cat]:
             bp  = base[cat][name]["base_price"]
             st  = state[cat][name]
             mv  = [0.33,0.5,1,2,3,4,5][st.get("market",0)+2]
             sv  = 1.0 + 0.2 * st.get("stars",0)
-            return bp * mv * sv
+            misc = _get_misc_bonus(cat, name, stat_lookup[cat], state)
+            if cat in ("alloys", "items"):
+                misc *= _get_misc_bonus(cat, name, "alloy_and_item_val", state)
+            return bp * mv * sv * misc
     return 0.0
-
+    
 def ore_unlocked(ore: str, base: dict, state: dict) -> bool:
     return any(ps["owned"] and ore in base["planets"][pid]["resources"]
                for pid, ps in state["planets"].items())
@@ -351,7 +359,8 @@ global_bonuses = {
     "manager_bonus": 1,  
     "manager_sec_bonus": 1,  
     "market_bonus": 1, 
-    "mining": 1,    
+    "mining": 1,  
+    "ore_val": 1,    
     "pla_upg_price": 1,
     "prod_boost_speed": 1,
     "prod_boost_dur": 1,
@@ -380,14 +389,17 @@ gb_descriptions = {
     "manager_sec_bonus": "Manager Secondary Bonuses",  
     "market_bonus": "Market Bonus", 
     "mining": "Mining Rate",    
+    "ore_val": "Ore Value",
     "pla_upg_price": "Planet Upgrade Price",
+    "pla_unl_price": "Planet Unlock Price",
     "prod_boost_speed": "Production Boost Speed",
     "prod_boost_dur": "Production Boost Duration",
     "proj_cost": "Decrease Project Cost",
     "rov_scan_time": "Rover Scan Time", 
     "speed": "Ship Speed",          
     "smelt_speed": "Smelt Speed",
-    "smelt_ing": "Decrease Smelter Ingredients"    
+    "smelt_ing": "Decrease Smelter Ingredients"  ,
+    "__": "__"    
 }
 
 def calculate_global_bonuses(base, state):
@@ -448,12 +460,33 @@ def calculate_global_bonuses(base, state):
         station_bonuses[stat] = station_bonuses.get(stat,1) + bonus
         debug_str = f"  Station {station}: modifying '{stat}' by {bonus}: {station_bonuses[stat]}"
         #print(debug_str)
-        
     for stat, bonus in station_bonuses.items():
         global_bonuses[stat] *= bonus
         debug_str = f"  Station : Multiplying bonus '{stat}' by {bonus}"
         #print(debug_str)
+
+    # Misc bonus
+    for m_item in state.get("misc_bonuses", []):
+        if m_item["target_type"] != "global": continue
+        stat = m_item["stat"]
+        if stat == '__': continue
+        bonus = m_item["bonus"]
+        global_bonuses[stat] *= bonus
+    
         
+def _get_misc_bonus(target_type: str, target: str, stat: str, state:dict):
+    total = 1
+    debug_str = f"{target_type}; {target}; {stat}"
+    m_bonuses = state.get("misc_bonuses", [])
+    for m_item in m_bonuses:
+        if m_item["target_type"] != target_type: continue
+        if m_item["target"] != target: continue
+        if m_item["stat"] != stat: continue
+        total *= m_item["bonus"]
+    debug_str += f"; {total:.2f}"
+    #print(debug_str)
+    return total
+
                 
 def beacon_bonus(pid: str, stat: str, base: dict, state: dict) -> float:
     """Return the beacon multiplier for planet pid and stat (mining/speed/cargo)."""
@@ -614,7 +647,8 @@ def get_vps(pid: str, state, base, level=-1) -> float:
         mkt = ore_state.get("market",0)
         stars = ore_state.get("stars",0)
         bp = base["ores"][o]["base_price"]
-        rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
+        #rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
+        rp = effective_price(o, base, state)
         if (_proj(state, "Ore Targeting")) and (i == ore_p):
             p += 15
         vps += rp * mr * p / 100
@@ -724,6 +758,7 @@ class App:
                 with dpg.tab(label="  Beacons    "): self._tab_beacons()
                 with dpg.tab(label="  Rooms      "): self._tab_rooms()
                 with dpg.tab(label="  Station    "): self._tab_station()
+                with dpg.tab(label="  Misc       "): self._tab_misc()
 
         dpg.set_viewport_resize_callback(self._resize)
         dpg.create_viewport(title="Idle Planet Miner - Calculator",
@@ -801,7 +836,7 @@ class App:
         except Exception as e:
             print(f"[warn] Could not load noStar.png: {e}")
         
-        for img_name in ["star_white", "star_black", "Arrow_up", "Arrow_down"]:
+        for img_name in ["star_white", "star_black", "Arrow_up", "Arrow_down", "Edit"]:
             img_path = f"{SCRIPT_DIR}/Images/{img_name}.png"
             if os.path.exists(img_path):
                 img = Image.open(img_path).convert("RGBA")
@@ -2718,9 +2753,9 @@ class App:
         mm = manager_primary_bonus(pid,"mining",self.state)
         ms = manager_primary_bonus(pid,"speed", self.state)
         mc = manager_primary_bonus(pid,"cargo", self.state)
-        mb = probe["m"]*colony["m"]*bm*mm*gm
-        sb = probe["s"]*colony["s"]*bs*ms*gs
-        cb = probe["c"]*colony["c"]*bc*mc*gc
+        mb = probe["m"]*colony["m"]*bm*mm*gm*_get_misc_bonus("planets", pid, "mining", self.state)
+        sb = probe["s"]*colony["s"]*bs*ms*gs*_get_misc_bonus("planets", pid, "speed", self.state)
+        cb = probe["c"]*colony["c"]*bc*mc*gc*_get_misc_bonus("planets", pid, "cargo", self.state)
         #mr = _mining_rate(lvls["mining"],mb) if owned else 0
         mr = _planet_mining_rate(pid, self.base, self.state) if owned else 0
         sp = _ship_speed( lvls["speed"], sb) if owned else 0
@@ -3002,7 +3037,7 @@ class App:
                     new_state[cat][n]["stars"] = self.state[cat][n]["stars"]
             
             # Copy over states that don't get reset
-            for cat in ("globals", "beacons", "rooms", "station"):
+            for cat in ("globals", "beacons", "rooms", "station", "misc_bonuses"):
                 new_state[cat] = self.state[cat].copy()
                 
             # Copy managers over (without planet assignments)
@@ -3256,6 +3291,7 @@ class App:
         self._refresh_station()
             
     # ──── MISC ─────────────────────        
+    _MISC_TARGET_TYPES = ["","ores","alloys","items","planets","global"]
     
     def _tab_misc(self):
         with dpg.group(horizontal=True):
@@ -3267,10 +3303,9 @@ class App:
             scrollY=True, scrollX=True, resizable=True,
             policy=dpg.mvTable_SizingFixedFit, freeze_rows=1
         ):
-            for lbl, w in [
-                ("",85), ("Name",150), ("Target Type", 140), ("Target"),
-                ("Stat", 120), ("Bonus",100)
-            ]:  
+            for lbl, w in [("",120), ("Name",300), 
+                ("Target Type", 140), ("Target", 140),
+                ("Stat", 120), ("Bonus",100)]:  
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
                 
     def _refresh_misc(self):
@@ -3278,11 +3313,123 @@ class App:
         misc_items = self.state.get("misc_bonuses", [])
         max_idx = len(misc_items) - 1
         for idx, m_item in enumerate(misc_items):
-            name = m_item("name", f"Misc bonus {idx}")
-            target_type = m_item("target_type", "global")
-            target = m_item("target", "global")
-            stat = m_item("stat", "")
-            bonus = m_item("bonus", 1)
+            debug_str = f"{idx}: {m_item}  ::  '{m_item['name']}'"
+            name = m_item.get("name", f"Misc bonus {idx}")
+            target_type = m_item.get("target_type", "global")
+            target = m_item.get("target", "global")
+            stat = m_item.get("stat", "")
+            bonus = m_item.get("bonus", 1)
+            
+            with dpg.table_row(parent="misc_tbl"):
+                # order/delete
+                with dpg.group(horizontal=True):
+                    x_button = dpg.add_button(label="X", 
+                        user_data=idx, callback=self._cb_misc_delete)
+                    dpg.bind_item_theme(x_button, "red_button_theme")
+                    dpg.add_image_button(texture_tag="Arrow_up",
+                                         width=17, height=20,
+                                         enabled=idx > 0,                                         
+                                         user_data=(idx, -1), callback=self._cb_misc_move)
+                    dpg.add_image_button(texture_tag="Arrow_down", 
+                                         width=17, height=20,                    
+                                         enabled=idx < max_idx,                                         
+                                         user_data=(idx, 1), callback=self._cb_misc_move)
+                    dpg.add_spacer(width=3)
+                    dpg.add_image_button(texture_tag="Edit",
+                                         width=17, height=20,
+                                         user_data=idx, callback=self._cb_misc_edit)
+                
+                # name
+                dpg.add_input_text(default_value=name,
+                                   tag=f"misc_name_{idx}",
+                                   user_data=idx,
+                                   on_enter=True,
+                                   callback=self._cb_misc_update_name)
+                
+                # Target Type
+                dpg.add_combo(items=self._MISC_TARGET_TYPES,
+                              default_value=target_type,
+                              width=140,
+                              user_data=idx,
+                              tag=f"misc_type_{idx}",
+                              callback=self._cb_misc_update_type)
+                
+                # Target
+                dpg.add_input_text(default_value=target,
+                                   tag=f"misc_target_{idx}",
+                                   user_data=idx,
+                                   on_enter=True,
+                                   callback=self._cb_misc_update_target)
+                
+                # Stat
+                dpg.add_combo(items=list(gb_descriptions.keys()),
+                              default_value=stat,
+                              width=140,
+                              user_data=idx,
+                              tag=f"misc_stat_{idx}",
+                              callback=self._cb_misc_update_stat)
+                
+                # Bonus
+                dpg.add_input_text(default_value=bonus,
+                                   tag=f"misc_bonus_{idx}",
+                                   user_data=idx,
+                                   on_enter=True,
+                                   callback=self._cb_misc_update_bonus)
+                                   
+    def _cb_misc_update_name(self, s, v, ud):
+        self.state["misc_bonuses"][ud]["name"] = v.strip() or f"Misc bonus {ud}"
+        save_state(self.state)
+        self._refresh_misc()
+            
+    def _cb_misc_update_type(self, s, v, ud):
+        self.state["misc_bonuses"][ud]["target_type"] = v or ""
+        save_state(self.state)
+        self._refresh_all()
+            
+    def _cb_misc_update_target(self, s, v, ud):
+        self.state["misc_bonuses"][ud]["target"] = v.strip() or ""
+        save_state(self.state)
+        self._refresh_all()
+            
+    def _cb_misc_update_stat(self, s, v, ud):
+        self.state["misc_bonuses"][ud]["stat"] = v or "__"
+        save_state(self.state)
+        self._refresh_all()
+            
+    def _cb_misc_update_bonus(self, s, v, ud):
+        self.state["misc_bonuses"][ud]["bonus"] = float(v) or 1
+        save_state(self.state)
+        self._refresh_all()
+            
+    def _cb_misc_add(self, s, v, ud):
+        self.state.setdefault("misc_bonuses", []).append({
+            "name": f"Misc Bonus {len(self.state['misc_bonuses']) + 1}",
+            "target_type": "",
+            "target": "",
+            "stat": "__",
+            "bonus": 1
+        })
+        save_state(self.state)
+        self._refresh_misc()
+        
+    def _cb_misc_delete(self, s, v, ud):
+        m_items = self.state.get("misc_bonuses",[])
+        if 0 <= ud < len(m_items):
+            m_items.pop(ud)
+        save_state(self.state)
+        self._refresh_all()
+        
+    def _cb_misc_move(self, s, v, ud):
+        idx, d = ud
+        swap_idx = idx + d
+        m_items = self.state.get("misc_bonuses",[])
+        m_items[idx], m_items[swap_idx] = m_items[swap_idx], m_items[idx]
+        self.state["misc_bonuses"] = m_items
+        save_state(self.state)
+        self._refresh_misc()
+        
+    def _cb_misc_edit(self, s, v, ud):
+        pass
     
     # ─────────────────────────
 
@@ -3299,6 +3446,7 @@ class App:
         self._refresh_managers()
         self._refresh_dashboard()
         self._refresh_station()
+        self._refresh_misc()
         dpg.set_value("lbl_smelters", str(self.state.get("smelters",1)))
         dpg.set_value("lbl_crafters", str(self.state.get("crafters",1)))
         dpg.set_value("dash_filter",  self.prefs.get("dashboard_filter","All"))
