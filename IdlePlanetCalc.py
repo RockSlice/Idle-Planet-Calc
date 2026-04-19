@@ -709,6 +709,31 @@ def _get_ast_vps(base: dict, state: dict):
     
     return 2.9 * ast_val / a_time
     
+def _get_next_lvl_cost(pid:str, lvl:int, base:dict, state:dict) -> float:
+    # price is the same regardless of the type of upgrade
+    # for lvl 0, we will be calculating price to lvl 9
+    unl = base["planets"].get(pid,{}).get("base_price",100)
+    unl *= global_bonuses.get("pla_unl_price",1)
+    # check if there's an applicable misc bonus
+    upg_bonus = global_bonuses.get("pla_upg_price",1)
+    for m_item in state.get("misc_bonuses", []):
+        if m_item.get("target_type",'') != "planets": continue
+        if m_item.get("target",'') != pid: continue
+        if m_item.get("stat",'') == "pla_unl_price":
+            unl *= m_item.get("bonus",1)
+        elif m_item.get("stat",'') == "pla_upg_price":
+            upg_bonus *= m_item.get("bonus",1)
+    
+    # formula for each level (to level+1) is:
+    # (unl/20) * (1.3 ^ (lvl - 1))
+    # for getting to lvl 9, we can precompute the series
+    if lvl == 0:
+        upgrade_price = unl + (upg_bonus * (unl * 2.19288))
+    else:
+        upgrade_price = upg_bonus * (unl/20) * (1.3 ** (lvl - 1))
+    return upgrade_price
+    
+            
 
 def get_next_vps_per(pid: str, level: int, vps: float, base: dict, state: dict) -> float:
     bp = base["planets"][pid]["base_price"]
@@ -719,11 +744,12 @@ def get_next_vps_per(pid: str, level: int, vps: float, base: dict, state: dict) 
         # Non-owned: amortized VPS/$ if bought and upgraded to level 9.
         # Peak level is always 9 regardless of ore prices (cost/rate curve property).
         # Total cost = bp + sum of upgrade costs for levels 1..8
-        total_cost = bp + sum((bp/20) * (1.3**l) for l in range(8))
+        total_cost = _get_next_lvl_cost(pid, 0, base, state)
+        #total_cost = bp + sum((bp/20) * (1.3**l) for l in range(8))
         return get_vps(pid, state, base, 9) / total_cost
     else:
         # Owned: marginal VPS/$ of the next mining level upgrade.
-        next_cost = (bp/20) * (1.3**(level - 1))
+        next_cost = _get_next_lvl_cost(pid, level, base, state)
         next_vps  = get_vps(pid, state, base, level + 1) - get_vps(pid, state, base, level)
         return next_vps / next_cost
 
@@ -2499,12 +2525,15 @@ class App:
                              color=(0,0,0,255))
  
                 # "Mining" column
-                with dpg.group(horizontal=True):
+                with dpg.group(horizontal=True,tag=f"pla_{pid}_mining_cell"):
                     lvl_grp("mining")
                     with dpg.group():
                         dpg.add_text("—",
                                      tag=f"pla_{pid}_ops",
                                      color=col)
+                with dpg.tooltip(f"pla_{pid}_mining_cell"):
+                    dpg.add_text('',tag=f"pla_{pid}_mining_tt")
+                    
 
                 # "Transport" column
                 dpg.add_text(f"", 
@@ -2799,6 +2828,11 @@ class App:
         dpg.set_value(f"pla_{pid}_mininglvl", ps["levels"]["mining"])
         dpg.configure_item(f"pla_{pid}_mininglvl", enabled=owned)
         dpg.configure_item(f"pla_{pid}_mininglvl_btn", enabled=owned)
+        if owned:
+            tt_text = f"Upgrade cost: $ {fmt(_get_next_lvl_cost(pid, lvls['mining'], self.base, self.state))}"
+        else:
+            tt_text = f"Cost to lvl 9: $ {fmt(_get_next_lvl_cost(pid, lvls['mining'], self.base, self.state))}"
+        dpg.set_value(f"pla_{pid}_mining_tt", tt_text)
         
         # Ore/s
         dpg.set_value(f"pla_{pid}_ops", fmt(mr) if owned else "—")
