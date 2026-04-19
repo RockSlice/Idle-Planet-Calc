@@ -724,6 +724,15 @@ def _get_next_lvl_cost(pid:str, lvl:int, base:dict, state:dict) -> float:
         elif m_item.get("stat",'') == "pla_upg_price":
             upg_bonus *= m_item.get("bonus",1)
     
+    # Colony Tax Incentives
+    col = state["planets"][pid].get("colony",{"lvl":0})["lvl"]
+    ti = 0
+    for proj in ["Colony Tax Incentives", "Colony Advanced Tax Incentives", "Colony Superior Tax Incentives"]:
+        if _proj(state, proj):
+            ti += 0.05
+    ti *= col
+    upg_bonus *= 1 - ti
+    
     # formula for each level (to level+1) is:
     # (unl/20) * (1.3 ^ (lvl - 1))
     # for getting to lvl 9, we can precompute the series
@@ -2541,20 +2550,24 @@ class App:
                              color=C_TEAL)
                 
                 # Speed column
-                with dpg.group(horizontal=True):
+                with dpg.group(horizontal=True,tag=f"pla_{pid}_speed_cell"):
                     lvl_grp("speed")
                     with dpg.group():
                         dpg.add_text("—",
                                      tag=f"pla_{pid}_speed",
                                      color=col)
+                with dpg.tooltip(f"pla_{pid}_speed_cell"):
+                    dpg.add_text('',tag=f"pla_{pid}_speed_tt")
                                  
                 # "Cargo" column
-                with dpg.group(horizontal=True):
+                with dpg.group(horizontal=True,tag=f"pla_{pid}_cargo_cell"):
                     lvl_grp("cargo")
                     with dpg.group():
                         dpg.add_text("—", 
                                      tag=f"pla_{pid}_cargo",
                                      color=col)
+                with dpg.tooltip(f"pla_{pid}_cargo_cell"):
+                    dpg.add_text('',tag=f"pla_{pid}_cargo_tt")
 
                 # Probe bonuses
                 with dpg.group(horizontal=True):
@@ -2855,6 +2868,11 @@ class App:
         dpg.set_value(f"pla_{pid}_speedlvl", ps["levels"]["speed"])
         dpg.configure_item(f"pla_{pid}_speedlvl", enabled=owned)
         dpg.configure_item(f"pla_{pid}_speedlvl_btn", enabled=owned)
+        if owned:
+            tt_text = f"Upgrade cost: $ {fmt(_get_next_lvl_cost(pid, lvls['speed'], self.base, self.state))}"
+        else:
+            tt_text = f"Cost to lvl 9: $ {fmt(_get_next_lvl_cost(pid, lvls['speed'], self.base, self.state))}"
+        dpg.set_value(f"pla_{pid}_speed_tt", tt_text)
 
         # Speed
         dpg.set_value(f"pla_{pid}_speed", fmt(sp) if owned else "—")
@@ -2864,6 +2882,11 @@ class App:
         dpg.set_value(f"pla_{pid}_cargolvl", ps["levels"]["cargo"])
         dpg.configure_item(f"pla_{pid}_cargolvl", enabled=owned)
         dpg.configure_item(f"pla_{pid}_cargolvl_btn", enabled=owned)
+        if owned:
+            tt_text = f"Upgrade cost: $ {fmt(_get_next_lvl_cost(pid, lvls['cargo'], self.base, self.state))}"
+        else:
+            tt_text = f"Cost to lvl 9: $ {fmt(_get_next_lvl_cost(pid, lvls['cargo'], self.base, self.state))}"
+        dpg.set_value(f"pla_{pid}_cargo_tt", tt_text)
         
         # Cargo
         dpg.set_value(f"pla_{pid}_cargo", fmt(cg) if owned else "—")

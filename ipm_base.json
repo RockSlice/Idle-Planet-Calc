@@ -260,7 +260,7 @@
 	{"name":"Packaging",         "boost":"Increase cargo",                 "stat":"cargo",       "base_effect":1.5,  "per_level":0.25,"max_level":60,"max_bonus":16.25},
 	{"name":"Forge",             "boost":"Increase smelt speed",           "stat":"smelt_speed", "base_effect":1.2,  "per_level":0.1,"max_level":60,"max_bonus":7.1},
 	{"name":"Workshop",          "boost":"Increase craft speed",           "stat":"craft_speed", "base_effect":1.2,  "per_level":0.1,"max_level":60,"max_bonus":7.1},
-	{"name":"Astronomy",         "boost":"Reduce planet upgrade prices",   "stat":"col_cost",    "base_effect":0.9,  "per_level":-0.04,"max_level":11,"max_bonus":0.5},
+	{"name":"Astronomy",         "boost":"Planet upgrade prices",          "stat":"pla_upg_price","base_effect":0.9,  "per_level":-0.04,"max_level":11,"max_bonus":0.5},
 	{"name":"Lab",               "boost":"Decrease project cost",          "stat":"proj_cost",   "base_effect":0.9,  "per_level":-0.04,"max_level":11,"max_bonus":0.5},
 	{"name":"Robotics",          "boost":"Decrease rover time",            "stat":"rov_scan_time","base_effect":0.9,  "per_level":-0.04,"max_level":11,"max_bonus":0.5},
 	{"name":"Lounge",            "boost":"Increase credits earned",        "stat":"credit",      "base_effect":1.15, "per_level":0.05,"max_level":60,"max_bonus":4.1},
