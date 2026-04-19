@@ -842,7 +842,7 @@ class App:
         try:
             img  = Image.open(star_path).convert("RGBA")
             w, h = img.size
-            flat = [c / 255.0 for px in img.getdata() for c in px]
+            flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
             with dpg.texture_registry():
                 self._star_tex = dpg.add_static_texture(
                     width=w, height=h, default_value=flat)
@@ -854,7 +854,7 @@ class App:
         try:
             img  = Image.open(no_star_path).convert("RGBA")
             w, h = img.size
-            flat = [c / 255.0 for px in img.getdata() for c in px]
+            flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
             with dpg.texture_registry():
                 self._no_star_tex = dpg.add_static_texture(
                     width=w, height=h, default_value=flat)
@@ -867,7 +867,7 @@ class App:
             if os.path.exists(img_path):
                 img = Image.open(img_path).convert("RGBA")
                 w,h = img.size
-                flat = [c / 255.0 for px in img.getdata() for c in px]
+                flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
                 with dpg.texture_registry():
                     dpg.add_static_texture(
                             width=w, height=h, default_value=flat, tag=img_name)
@@ -877,7 +877,7 @@ class App:
         try:
             img  = Image.open(arrow_right_path).convert("RGBA")
             w, h = img.size
-            flat = [c / 255.0 for px in img.getdata() for c in px]
+            flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
             with dpg.texture_registry():
                 self._arrow_right = dpg.add_static_texture(
                     width=w, height=h, default_value=flat)
@@ -890,7 +890,7 @@ class App:
         try:
             img  = Image.open(telescope_path).convert("RGBA")
             w, h = img.size
-            flat = [c / 255.0 for px in img.getdata() for c in px]
+            flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
             with dpg.texture_registry():
                 self._telescope = dpg.add_static_texture(
                     width=w, height=h, default_value=flat)
@@ -900,7 +900,7 @@ class App:
         
         img = Image.open(os.path.join(SCRIPT_DIR, "Images/Check.png")).convert("RGBA")
         w,h = img.size
-        flat = [c / 255.0 for px in img.getdata() for c in px]
+        flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
         with dpg.texture_registry():
             self._check = dpg.add_static_texture(
                 width=w, height=h, default_value=flat)
@@ -911,7 +911,7 @@ class App:
                 img_path = f"{SCRIPT_DIR}/Images/Ore_Unknown.png"
             img = Image.open(img_path).convert("RGBA")
             w,h = img.size
-            flat = [c / 255.0 for px in img.getdata() for c in px]
+            flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
             with dpg.texture_registry():
                 dpg.add_static_texture(
                         width=w, height=h, default_value=flat, tag=f"Ore_{ore}")
@@ -922,7 +922,7 @@ class App:
                 img_path = f"{SCRIPT_DIR}/Images/Alloy_Unknown.png"
             img = Image.open(img_path).convert("RGBA")
             w,h = img.size
-            flat = [c / 255.0 for px in img.getdata() for c in px]
+            flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
             with dpg.texture_registry():
                 dpg.add_static_texture(
                         width=w, height=h, default_value=flat, tag=f"Alloy_{alloy}")
@@ -933,7 +933,7 @@ class App:
                 img_path = f"{SCRIPT_DIR}/Images/Item_Unknown.png"
             img = Image.open(img_path).convert("RGBA")
             w,h = img.size
-            flat = [c / 255.0 for px in img.getdata() for c in px]
+            flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
             with dpg.texture_registry():
                 dpg.add_static_texture(
                         width=w, height=h, default_value=flat, tag=f"Item_{item}")
@@ -945,7 +945,7 @@ class App:
                 img_path = f"{SCRIPT_DIR}/Images/Planet_Unknown.png"
             img = Image.open(img_path).convert("RGBA")
             w,h = img.size
-            flat = [c / 255.0 for px in img.getdata() for c in px]
+            flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
             with dpg.texture_registry():
                 dpg.add_static_texture(
                         width=w, height=h, default_value=flat, tag=f"Planet_{pname}")
@@ -967,7 +967,7 @@ class App:
                 try:
                     img  = Image.open(path).convert("RGBA")
                     w, h = img.size
-                    flat = [c / 255.0 for px in img.getdata() for c in px]
+                    flat = [c / 255.0 for px in img.get_flattened_data() for c in px]
                     self._chev_tex[v] = dpg.add_static_texture(
                         width=w, height=h, default_value=flat)
                     self._chev_size = (w, h)
