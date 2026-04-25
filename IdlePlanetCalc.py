@@ -82,7 +82,7 @@ def load_base() -> dict:
 def default_state(base: dict) -> dict:
     planets = {}
     for pid, p in base["planets"].items():
-        owned = (p["telescope"] == 0)
+        owned = True if pid == "1" else False
         lvl   = 1 if owned else 0
         planets[pid] = {
             "owned":  owned,
@@ -353,7 +353,7 @@ global_bonuses = {
     "col_cost": 1,
     "colonizing_bonus": 1,
     "craft_speed": 1,
-    "craft_cost": 1,
+    "craft_ing": 1,
     "credits": 1,         
     "item_val": 1,         
     "manager_bonus": 1,  
@@ -382,7 +382,7 @@ gb_descriptions = {
     "col_cost": "Colonization Cost",
     "colonizing_bonus": "Colonizing Bonuses",
     "craft_speed": "Craft Speed",
-    "craft_cost": "Craft Cost",
+    "craft_ing": "Craft Cost",
     "credits": "Credits",         
     "item_val": "Item Value",         
     "manager_bonus": "Manager Bonuses",  
@@ -2534,6 +2534,8 @@ class App:
                               enabled=False,
                               tag=f"pla_{pid}_manager",
                               callback=self._cb_planet_manager)
+                with dpg.tooltip(f"pla_{pid}_manager",tag=f"pla_{pid}_mgr_tt"):
+                    dpg.add_text('',tag=f"pla_{pid}_mgr_tt_text")
                               
                 # "VPS" column
                 vps = 0
@@ -2786,6 +2788,10 @@ class App:
 
     def _cb_planet_lvl(self, s, v, ud):
         pid, stat, delta = ud
+        if dpg.is_key_down(dpg.mvKey_LControl) or dpg.is_key_down(dpg.mvKey_RControl):
+            delta *= 2
+        elif dpg.is_key_down(dpg.mvKey_LShift) or dpg.is_key_down(dpg.mvKey_RShift):
+            delta *= 10
         cur = self.state["planets"][pid]["levels"][stat]
         self.state["planets"][pid]["levels"][stat] = max(1, cur+delta)
         save_state(self.state)
@@ -2851,11 +2857,20 @@ class App:
         
         # Manager
         mgr_names = [""] + [m["name"] for m in self.state.get("managers", [])]
-        cur_mgr = next((m["name"] for m in self.state.get("managers", []) if m.get("planet")==pid), "")
+        cur_mgr = next((m for m in self.state.get("managers", []) if m.get("planet")==pid), {})
         dpg.configure_item(f"pla_{pid}_manager",
                            enabled=owned,
                            items=mgr_names,
-                           default_value=cur_mgr)
+                           default_value=cur_mgr.get("name",''))
+        if cur_mgr:
+            dpg.configure_item(f"pla_{pid}_mgr_tt", show=True)
+            tt_text = f"{cur_mgr['stars']}-Star\nPrimary: {cur_mgr['primary']}"
+            if cur_mgr['secondary'] != "none":
+                tt_text += f"\nSecondary: {cur_mgr['secondary']}"
+            dpg.set_value(f"pla_{pid}_mgr_tt_text", tt_text)
+        else:
+            dpg.configure_item(f"pla_{pid}_mgr_tt", show=False)
+            dpg.set_value(f"pla_{pid}_mgr_tt_text", "")
         
         # VPS
         vps = get_vps(pid, self.state, self.base) if owned else 0

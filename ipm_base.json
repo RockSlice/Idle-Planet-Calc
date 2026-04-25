@@ -203,7 +203,7 @@
     "18": {"name": "Gorgon",     "distance_min":5546, "distance_max":5564,"distance": 5555,  "base_price": 12e6,     "telescope": 5,  "resources": {"Diamond": 80, "Lead": 20}},
     "19": {"name": "Parnitha",   "distance_min":6246, "distance_max":6260,"distance": 6253,  "base_price": 25e6,     "telescope": 5,  "resources": {"Gold": 70, "Platinum": 30}},
     "20": {"name": "Orisoni",    "distance_min":6643, "distance_max":6657,"distance": 6650,  "base_price": 50e6,     "telescope": 6,  "resources": {"Platinum": 70, "Diamond": 30}},
-    "21": {"name": "Theseus",    "distance_min":6782, "distance_max":7187,"distance": 6985,  "base_price": 100e6,    "telescope": 6,  "resources": {"Platinum": 100}},
+    "21": {"name": "Theseus",    "distance_min":6782, "distance_max":7142,"distance": 6962,  "base_price": 100e6,    "telescope": 6,  "resources": {"Platinum": 100}},
     "22": {"name": "Zelene",     "distance_min":7488, "distance_max":7502,"distance": 7495,  "base_price": 200e6,    "telescope": 6,  "resources": {"Silver": 70, "Titanium": 30}},
     "23": {"name": "Han",        "distance_min":7910, "distance_max":7996,"distance": 7954,  "base_price": 400e6,    "telescope": 7,  "resources": {"Titanium": 70, "Diamond": 20, "Gold": 10}},
     "24": {"name": "Strennus",   "distance_min":8010, "distance_max":8072,"distance": 8041,  "base_price": 800e6,    "telescope": 7,  "resources": {"Titanium": 70, "Platinum": 30}},
