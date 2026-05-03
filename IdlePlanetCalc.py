@@ -231,6 +231,11 @@ def _planet_mining_rate(pid: str, base: dict, state: dict) -> float:
         if (_proj(state, "Ore Targeting")) and (i == ore_p):
             pct += 15
         total += mr * pct / 100
+    if ps.get("Rover",False):
+        if _proj(state, "Rover Resupply"):
+            total *= 2.5
+        if _proj(state, "Advanced Rover Resupply"):
+            total *= 2
     return total
     
 def _ore_sell_rate(ore: str, base: dict, state: dict) -> float:
@@ -248,6 +253,14 @@ def _ore_sell_rate(ore: str, base: dict, state: dict) -> float:
     smelt_amt *= global_bonuses.get("smelt_ing", 1)
     smelt_rate = smelt_amt / smelt_time
     return 90 * (mr - smelt_rate) / mr
+    
+def _resource_unlocked(name: str, base: dict, state: dict) -> bool:
+    if name in base["ores"].keys():
+        return ore_unlocked(name, base, state)
+    if name in base["alloys"].keys():
+        return state["alloys"][name].get("unlocked",False)
+    else:
+        return state["items"].get(name,{}).get("unlocked",False)
     
 
 def _mining_rate(lv: int, bonus: float=1.0) -> float:
@@ -335,6 +348,73 @@ def _get_col_string(col: dict):
     cStr += "1" if c == 1 else f"{c:.2f}"
     return cStr
         
+def _get_manufacture_chain(target_product:str, base:dict, state:dict, quantity:int=1):
+    items = base["items"]
+    alloys = base["alloys"]
+    
+    # Extract multipliers
+    c_speed = global_bonuses.get("craft_speed", 1.0)
+    s_speed = global_bonuses.get("smelt_speed", 1.0)
+    c_ing = global_bonuses.get("craft_ing", 1.0)  # e.g., 0.85 for -15%
+    s_ing = global_bonuses.get("smelt_ing", 1.0)
+
+    res = {
+        "product": target_product,
+        "item_stages": [],
+        "alloy_stages": [],
+        "ore": {},
+        "craft_time": 0,
+        "smelt_time": 0
+    }
+
+    current_reqs = {target_product: quantity}
+    
+    # STAGE 1: Process Items (Crafting)
+    while any(name in items for name in current_reqs):
+        next_reqs = {}
+        stage_items = {}
+        
+        for name, qty in current_reqs.items():
+            if name in items:
+                data = items[name]
+                # Apply craft speed bonus
+                res["craft_time"] += (data["craft_time"] / c_speed) * qty
+                
+                for ing, ing_qty in data["recipe"].items():
+                    # Apply ingredient reduction bonus
+                    # math.ceil is often used if the game doesn't allow partial ingredients
+                    total_ing = math.ceil(ing_qty * c_ing) * qty
+                    next_reqs[ing] = next_reqs.get(ing, 0) + total_ing
+                    if ing in items:
+                        stage_items[ing] = stage_items.get(ing, 0) + total_ing
+            else:
+                next_reqs[name] = next_reqs.get(name, 0) + qty
+        
+        if stage_items:
+            res["item_stages"].append(stage_items)
+        current_reqs = next_reqs
+
+    # STAGE 2: Process Alloys (Smelting)
+    while any(name in alloys for name in current_reqs):
+        stage_alloys = {k: v for k, v in current_reqs.items() if k in alloys}
+        res["alloy_stages"].append(stage_alloys)
+        
+        next_reqs = {}
+        for name, qty in current_reqs.items():
+            if name in alloys:
+                data = alloys[name]
+                # Apply smelt speed bonus
+                res["smelt_time"] += (data["smelt_time"] / s_speed) * qty
+                
+                for ing, ing_qty in data["recipe"].items():
+                    # Apply ingredient reduction bonus
+                    total_ing = math.ceil(ing_qty * s_ing) * qty
+                    next_reqs[ing] = next_reqs.get(ing, 0) + total_ing
+            else:
+                res["ore"][name] = res["ore"].get(name, 0) + qty
+        current_reqs = next_reqs
+
+    return res    
     
 
 # ── global bonuses ─────────────────────────────────────────────────────────────
@@ -549,8 +629,9 @@ def manager_secondary_bonus(stat: str, state: dict) -> float:
         if mgr.get("secondary") == stat:
             probe_smb = state["planets"][mgr["planet"]]["probe"].get("smb",1)
             stars = max(1, min(7, mgr.get("stars", 1)))
-            total = total + (_MGR_SECONDARY.get(stat, [0.0]*7)[stars - 1]) - 1
-            total = ((total - 1) * probe_smb) +1
+            mgr_bonus = (_MGR_SECONDARY.get(stat, [0.0]*7)[stars - 1]) - 1
+            mgr_bonus *= probe_smb
+            total = total + mgr_bonus
     gm = global_bonuses.get("manager_bonus", 1)        
     total = 1 + (gm * (total - 1))
     return total
@@ -655,6 +736,11 @@ def get_vps(pid: str, state, base, level=-1) -> float:
         if (_proj(state, "Ore Targeting")) and (i == ore_p):
             p += 15
         vps += rp * mr * p / 100
+    if ps.get("Rover",False):
+        if _proj(state, "Rover Resupply"):
+            vps *= 2.5
+        if _proj(state, "Advanced Rover Resupply"):
+            vps *= 2
     return vps
 
 def _get_ast_vps(base: dict, state: dict):
@@ -711,6 +797,145 @@ def _get_ast_vps(base: dict, state: dict):
     #print(debug_str)
     
     return 2.9 * ast_val / a_time
+
+def _find_equilibrium_candidates(pid: str, state: dict, base: dict, under: bool = True, numOut: int = 3) -> list:
+    """
+    Look at all combinations of mining/speed/cargo levels reachable within
+    10 additional total upgrade levels from the planet's current levels, and
+    return the `numOut` candidates closest to equilibrium between mining rate
+    and transport rate -- favouring being under (transport > mining) when
+    under=True, or over (mining > transport) when under=False.
+
+    Returns: [[mLevel, sLevel, cLevel, percent], ...]
+      where percent = 100 * (mining - transport) / mining
+      e.g. -1.94 means transport is 1.94% above mining (under)
+           +2.30 means mining is 2.30% above transport (over)
+    """
+    ps     = state["planets"][pid]
+    bd     = base["planets"][pid]
+    probe  = ps.get("probe",  {"m": 1, "s": 1, "c": 1})
+    colony = ps.get("colony", {"lvl": 0, "m": 1, "s": 1, "c": 1})
+    dist   = bd["distance"]
+    rover  = ps.get("Rover", False)
+
+    # ── fixed bonuses (don't change with level) ────────────────────────────────
+    gm = global_bonuses["mining"]
+    gs = global_bonuses["speed"]
+    gc = global_bonuses["cargo"]
+
+    bm = beacon_bonus(pid, "mining", base, state)
+    bs = beacon_bonus(pid, "speed",  base, state)
+    bc = beacon_bonus(pid, "cargo",  base, state)
+
+    mm = manager_primary_bonus(pid, "mining", state)
+    ms = manager_primary_bonus(pid, "speed",  state)
+    mc = manager_primary_bonus(pid, "cargo",  state)
+
+    mb = (probe["m"] * colony["m"] * bm * mm * gm
+          * _get_misc_bonus("planets", pid, "mining", state))
+    sb = (probe["s"] * colony["s"] * bs * ms * gs
+          * _get_misc_bonus("planets", pid, "speed",  state))
+    cb = (probe["c"] * colony["c"] * bc * mc * gc
+          * _get_misc_bonus("planets", pid, "cargo",  state))
+
+    if rover:
+        if _proj(state, "Rover Resupply"):
+            sb *= 2.5; cb *= 2.5
+        if _proj(state, "Advanced Rover Resupply"):
+            sb *= 2;   cb *= 2
+
+    # ── ore targeting offset ───────────────────────────────────────────────────
+    ore_p = _planet_ore_pri(pid, state, base)
+
+    def _mining(m_lv: int) -> float:
+        """Total ore/s mined at mining level m_lv."""
+        mr = _mining_rate(m_lv, mb)
+        total = 0.0
+        for i, (ore, pct) in enumerate(bd["resources"].items()):
+            if _proj(state, "Ore Targeting") and i == ore_p:
+                pct += 15
+            total += mr * pct / 100
+        if rover:
+            if _proj(state, "Rover Resupply"):
+                total *= 2.5
+            if _proj(state, "Advanced Rover Resupply"):
+                total *= 2
+        return total
+
+    def _transport(s_lv: int, c_lv: int) -> float:
+        """Total ore/s transported at speed level s_lv and cargo level c_lv."""
+        sp = _ship_speed(s_lv, sb)
+        cg = _ship_cargo(c_lv, cb)   # _ship_cargo already rounds internally
+        return _planet_transport(dist, sp, cg)
+
+    # ── current levels and search range ───────────────────────────────────────
+    cur_m = ps["levels"]["mining"]
+    cur_s = ps["levels"]["speed"]
+    cur_c = ps["levels"]["cargo"]
+
+    MAX_EXTRA = 10   # total extra levels across all three stats
+
+    candidates = []  # (abs_dist_from_zero, signed_percent, m, s, c)
+
+    # Enumerate: dm extra mining levels, ds extra speed levels, dc extra cargo
+    # levels, where dm+ds+dc <= MAX_EXTRA.  We only allow upgrades (no downgrades).
+    for dm in range(MAX_EXTRA + 1):
+        m_lv = cur_m + dm
+        mine = _mining(m_lv)
+        for ds in range(MAX_EXTRA - dm + 1):
+            s_lv = cur_s + ds
+            for dc in range(MAX_EXTRA - dm - ds + 1):
+                c_lv = cur_c + dc
+                trans = _transport(s_lv, c_lv)
+
+                if mine == 0:
+                    continue
+
+                # percent: positive → mining > transport (over), negative → under
+                pct = 100.0 * (mine - trans) / mine
+
+                # Filter by preferred side
+                if under and pct > 0:
+                    continue   # want transport >= mining; skip if mining > transport
+                if not under and pct < 0:
+                    continue   # want mining >= transport; skip if transport > mining
+
+                candidates.append((abs(pct), pct, m_lv, s_lv, c_lv))
+
+    if not candidates:
+        # Fallback: return closest regardless of side
+        for dm in range(MAX_EXTRA + 1):
+            m_lv = cur_m + dm
+            mine = _mining(m_lv)
+            for ds in range(MAX_EXTRA - dm + 1):
+                s_lv = cur_s + ds
+                for dc in range(MAX_EXTRA - dm - ds + 1):
+                    c_lv = cur_c + dc
+                    trans = _transport(s_lv, c_lv)
+                    if mine == 0:
+                        continue
+                    pct = 100.0 * (mine - trans) / mine
+                    candidates.append((abs(pct), pct, m_lv, s_lv, c_lv))
+
+    # Sort by absolute deviation, then prefer fewer total upgrades as tiebreaker
+    candidates.sort(key=lambda x: (
+        round(x[0], 4),
+        (x[2] - cur_m) + (x[3] - cur_s) + (x[4] - cur_c)
+    ))
+
+    # Deduplicate by (m, s, c) -- keep first (best) occurrence
+    seen = set()
+    result = []
+    for _, pct, m_lv, s_lv, c_lv in candidates:
+        key = (m_lv, s_lv, c_lv)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append([m_lv, s_lv, c_lv, round(pct, 2)])
+        if len(result) >= numOut:
+            break
+
+    return result
     
 def _get_next_lvl_cost(pid:str, lvl:int, base:dict, state:dict) -> float:
     # price is the same regardless of the type of upgrade
@@ -877,7 +1102,13 @@ class App:
         except Exception as e:
             print(f"[warn] Could not load noStar.png: {e}")
         
-        for img_name in ["star_white", "star_black", "Arrow_up", "Arrow_down", "Edit"]:
+        for img_name in ["star_white",
+                         "star_black",
+                         "Arrow_up",
+                         "Arrow_down",
+                         "Edit",
+                         "blank",
+                         "Rover"]:
             img_path = f"{SCRIPT_DIR}/Images/{img_name}.png"
             if os.path.exists(img_path):
                 img = Image.open(img_path).convert("RGBA")
@@ -1176,13 +1407,36 @@ class App:
             with dpg.theme_component(dpg.mvImageButton):
                 dpg.add_theme_style(dpg.mvStyleVar_FrameBorderSize, 2)
                 dpg.add_theme_color(dpg.mvThemeCol_Border, C_GOLD)
-                                
+        
+        with dpg.theme(tag="rover_button"):
+            with dpg.theme_component(dpg.mvImageButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (0,0,0,0))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (0,0,0,0))  
+                dpg.add_theme_color(dpg.mvThemeCol_HeaderActive, [0,0,0,0])
+                dpg.add_theme_style(dpg.mvStyleVar_FrameRounding,  0)
+                dpg.add_theme_style(dpg.mvStyleVar_FramePadding,  0, 0)
+                dpg.add_theme_style(dpg.mvStyleVar_WindowRounding,  0)
+                dpg.add_theme_style(dpg.mvStyleVar_TabRounding,     0)
+                dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing,     0, 0)
+                dpg.add_theme_style(dpg.mvStyleVar_CellPadding,     0, 0)
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (42,42,90))
+            with dpg.theme_component(dpg.mvImageButton, enabled_state=False):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, (0,0,0,0))
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (0,0,0,0))  
+                dpg.add_theme_color(dpg.mvThemeCol_HeaderActive, [0,0,0,0])
+                dpg.add_theme_style(dpg.mvStyleVar_FrameRounding,  0)
+                dpg.add_theme_style(dpg.mvStyleVar_FramePadding,  0, 0)
+                dpg.add_theme_style(dpg.mvStyleVar_WindowRounding,  0)
+                dpg.add_theme_style(dpg.mvStyleVar_TabRounding,     0)
+                dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing,     0, 0)
+                dpg.add_theme_style(dpg.mvStyleVar_CellPadding,     0, 0)
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, C_PANEL)
+                
         with dpg.theme(tag="right_align"):
             with dpg.theme_component(dpg.mvSelectable):
                 dpg.add_theme_style(dpg.mvStyleVar_SelectableTextAlign,1.0, 0.5)
                 dpg.add_theme_color(dpg.mvThemeCol_Header, [0,0,0,0])
                 dpg.add_theme_color(dpg.mvThemeCol_HeaderHovered, [0,0,0,0])
-                dpg.add_theme_color(dpg.mvThemeCol_HeaderActive, [0,0,0,0])
         
     def _resize(self, *_):
         w = dpg.get_viewport_client_width()
@@ -1234,17 +1488,14 @@ class App:
         ("Name",         "name",              160),
         ("Type",         "category",           55),
         ("Output $",     "output_value",       105),
+        ("$/s vs Ore",      "vps_profit_ore",      92),
+        ("Net Time",        "total_time",          72),
         ("Input Cost",   "direct_cost",        105),
         ("Ore Cost",     "ore_cost",           105),
         ("Profit/Input", "profit_direct",      105),
         ("Profit/Ore",   "profit_ore",         105),
-        ("Time",         "craft_time",          72),
-        ("Smelt",        "smelt_raw",           72),
-        ("Craft",        "craft_raw",           72),
-        ("Total",        "total_time",          72),
         ("$/s Out",      "vps_output",          92),
         ("$/s Input",    "vps_profit_direct",   92),
-        ("$/s Ore",      "vps_profit_ore",      92),
     ]
     _TIME_KEYS  = {"craft_time","smelt_raw","craft_raw","total_time"}
     _MONEY_KEYS = {"output_value","direct_cost","ore_cost","profit_direct",
@@ -1303,7 +1554,7 @@ class App:
     
         rows  = [r for r in rows if r["unlocked"]]
         rows.sort(key=lambda r: r.get(sort,0), reverse=True)
-        for r in rows:
+        for i, r in enumerate(rows):
             with dpg.table_row(parent="dash_tbl"):
                 category = r.get("category")
                 name = r.get("name")
@@ -1325,8 +1576,14 @@ class App:
                         with dpg.group(horizontal=True):
                             dpg.add_image(img)
                             dpg.add_text(txt, color=col)
+                    elif key == "total_time":
+                        dpg.add_text(txt, color=col, tag=f"dash_total_time_{i}")
+                        with dpg.tooltip(f"dash_total_time_{i}"):
+                            dpg.add_text(f"     Item Time: {fmt_time(r.get('craft_time', ''))}")
+                            dpg.add_text(f"Mat Craft Time: {fmt_time(r.get('craft_raw', ''))}")
+                            dpg.add_text(f"Mat Smelt Time: {fmt_time(r.get('smelt_raw', ''))}")
                     else:
-                        dpg.add_text(txt, color=col)
+                        dpg.add_text(txt, color=col, tag=f"dash_{key}_{i}")
 
     # ── ORES ───────────────────────────────────────────────────────────────────
     def _tab_ores(self):
@@ -1381,6 +1638,7 @@ class App:
         with dpg.group(horizontal=True):
             self._bonus_strip("smelt_speed","Smelt Speed",
                               "alc_comp","alc_man",self._cb_smelt_speed)
+            dpg.add_button(label="Unlock Possible", callback=self._cb_alloy_unlock_all)
         with dpg.table(tag="alloys_tbl", header_row=True, row_background=True,
                        borders_innerH=True, borders_outerH=True,
                        borders_innerV=True, borders_outerV=True,
@@ -1396,6 +1654,22 @@ class App:
         self.state["globals"]["smelt_speed"] = val
         dpg.set_value("alc_comp", f"×{val:.3f}")
         dpg.set_value("alc_man",  str(val))
+        save_state(self.state)
+        self._refresh_all()
+        
+    def _cb_alloy_unlock_all(self, s, v):
+        ores = self.state["ores"]
+        alloys = self.state["alloys"]
+        for name, bd in self.base["alloys"].items():
+            st = self.state["alloys"][name]
+            if st.get("unlocked", False): continue
+            possible = True
+            for i,q in bd["recipe"].items():
+                if not _resource_unlocked(i, self.base, self.state):
+                    possible = False
+                    continue
+            if possible:
+                alloys[name]["unlocked"] = True
         save_state(self.state)
         self._refresh_all()
 
@@ -1441,7 +1715,9 @@ class App:
                             img_name = f"Item_{i}"
                         debug_str = f"{i}: '{img_name}'"
                         #print(debug_str)
-                        dpg.add_image(img_name)
+                        icon = dpg.add_image(img_name)
+                        with dpg.tooltip(icon):
+                            dpg.add_text(i)
                         txt = dpg.add_input_text(default_value=f"x{q}",
                                            readonly=True,
                                            width=60)
@@ -1453,6 +1729,7 @@ class App:
         with dpg.group(horizontal=True):
             self._bonus_strip("craft_speed","Craft Speed",
                               "itc_comp","itc_man",self._cb_craft_speed)
+            dpg.add_button(label="Unlock Possible", callback=self._cb_items_unlock_all)
         with dpg.table(tag="items_tbl", header_row=True, row_background=True,
                        borders_innerH=True, borders_outerH=True,
                        borders_innerV=True, borders_outerV=True,
@@ -1461,6 +1738,21 @@ class App:
             for lbl, w in [("",28),("Item",150),("Base $",105),("Time",75),
                             ("Stars",80),("Market",115),("Real $",105),("Recipe",300)]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
+        
+    def _cb_items_unlock_all(self, s, v):
+        items = self.state["items"]
+        for name, bd in self.base["items"].items():
+            st = items[name]
+            if st.get("unlocked", False): continue
+            possible = True
+            for i,q in bd["recipe"].items():
+                if not _resource_unlocked(i, self.base, self.state):
+                    possible = False
+                    continue
+            if possible:
+                items[name]["unlocked"] = True
+        save_state(self.state)
+        self._refresh_all()
 
     def _cb_craft_speed(self, s, v, ud):
         try: val = max(0.01, float(v))
@@ -1524,7 +1816,9 @@ class App:
                             img_name = f"Alloy_{i}"
                         else:
                             img_name = f"Item_{i}"
-                        dpg.add_image(img_name)
+                        icon = dpg.add_image(img_name)
+                        with dpg.tooltip(icon):
+                            dpg.add_text(i)
                         txt = dpg.add_input_text(default_value=f"x{q}",
                                            readonly=True,
                                            width=60)
@@ -1624,8 +1918,14 @@ class App:
                             img_name = f"Alloy_{i}"
                         else:
                             img_name = f"Item_{i}"
-                        dpg.add_image(img_name,
-                                      tint_color=(255,255,255,255) if met else (150,150,150,200))
+                        try:    
+                            icon = dpg.add_image(img_name,
+                                          tint_color=(255,255,255,255) if met else (150,150,150,200))
+                        except Exception as e:
+                            print(f"Failed to add image: {img_name}")
+                            print(f"Exception: {e}")
+                        with dpg.tooltip(icon):
+                            dpg.add_text(i)
                         # apply global bonus: proj_cost   
                         # this is standard rounding, not floor                        
                         q = max(1,round(q * global_bonuses["proj_cost"]))
@@ -1818,6 +2118,8 @@ class App:
                                                  tint_color=(255,255,255,255) if enable_logistics else (150,150,150,200),
                                                  user_data=(pid,i),
                                                  callback=self._cb_planet_ore_priority)
+                            with dpg.tooltip(f"pla_{pid}_ore{i}"):
+                                dpg.add_text(k, tag=f"pla_{pid}_ore{i}_tt")
                             dpg.add_text(f"{v}%",
                                          color=C_TEXT,
                                          tag=f"pla_{pid}_ore{i}_text")
@@ -2051,6 +2353,8 @@ class App:
                     break
         save_state(self.state)
         self._refresh_all()
+        
+    
 
     # ── COLONIES ───────────────────────────────────────────────────────────────
     # Colony rows are stored in state["colonies"] as a list of dicts:
@@ -2449,6 +2753,7 @@ class App:
                 51,                     # Calculated transport speed
                 104,                 # Speed
                 104,                 # Cargo
+                25,
                 180,             # Probe: Mng, Spd, Crg
                 160,             # Colony: Mng, Spd, Crg
                 240,                    # Ores
@@ -2470,6 +2775,7 @@ class App:
                 dpg.add_text(lbl, color=C_ACCENT)
             # columns 11-13: "Probes" spanning — place in col 11, overflow right
 
+            dpg.add_image("Rover")
             #dpg.add_text("<----", color=C_TEAL)
             dpg.add_text("        Probes", color=C_TEAL)
             #dpg.add_text("---->", color=C_TEAL)  
@@ -2489,7 +2795,7 @@ class App:
             dpg.add_text(f"x10{exp_str}", 
                          color=C_MUTED,
                          tag="pla_nvps_exp")
-            for lbl in ["","","",""]:
+            for lbl in ["","","","",""]:
                 dpg.add_text(lbl, color=C_ACCENT)
             for lbl in ["     M / S / C","     M / S / C"]:
                 dpg.add_text(lbl, color=C_MUTED)
@@ -2563,6 +2869,8 @@ class App:
                 dpg.add_text(f"", 
                              tag=f"pla_{pid}_trans",
                              color=C_TEAL)
+                with dpg.tooltip(f"pla_{pid}_trans"):
+                    dpg.add_text('', tag=f"pla_{pid}_trans_tt")
                 
                 # Speed column
                 with dpg.group(horizontal=True,tag=f"pla_{pid}_speed_cell"):
@@ -2584,6 +2892,14 @@ class App:
                 with dpg.tooltip(f"pla_{pid}_cargo_cell"):
                     dpg.add_text('',tag=f"pla_{pid}_cargo_tt")
 
+                # Rover Column
+                dpg.add_image_button(tag=f"pla_{pid}_rover",
+                                     texture_tag="blank",
+                                     enabled=False,
+                                     user_data=pid,
+                                     callback=self._cb_planet_rover)
+                dpg.bind_item_theme(f"pla_{pid}_rover", "rover_button")
+                
                 # Probe bonuses
                 with dpg.group(horizontal=True):
                     dpg.add_button(label='',
@@ -2612,10 +2928,20 @@ class App:
                                              tint_color=(150,150,150,200),
                                              user_data=(pid,i),
                                              callback=self._cb_planet_ore_priority)
+                        with dpg.tooltip(f"pla_{pid}_ore{i}"):
+                            dpg.add_text(k, tag=f"pla_{pid}_ore{i}_tt")
                         dpg.add_text(f"{v}%",
                                      color=col,
                                      tag=f"pla_{pid}_ore{i}_text")
-                                    
+    
+    def _cb_planet_rover(self, s, v, ud):
+        pid = ud
+        ps = self.state["planets"].get(pid,{})
+        rover = not ps.get("Rover", False)
+        self.state["planets"][pid]["Rover"] = rover
+        save_state(self.state)
+        self._refresh_all()
+    
     def _cb_planet_probe_set(self, s, v, ud):
         pid = ud
         ps = self.state["planets"].get(pid,{})
@@ -2788,8 +3114,20 @@ class App:
 
     def _cb_planet_lvl(self, s, v, ud):
         pid, stat, delta = ud
+        if dpg.is_key_down(dpg.mvKey_LAlt):
+            candidates = _find_equilibrium_candidates(pid, self.state, self.base)
+            print(f"{pid}:{self.base['planets'][pid]['name']} next over candidates:")
+            for c in candidates:
+                print(c)
+            return
+        if dpg.is_key_down(dpg.mvKey_RAlt):
+            candidates = _find_equilibrium_candidates(pid, self.state, self.base, under=False)
+            print(f"{pid}:{self.base['planets'][pid]['name']} next under candidates:")
+            for c in candidates:
+                print(c)
+            return
         if dpg.is_key_down(dpg.mvKey_LControl) or dpg.is_key_down(dpg.mvKey_RControl):
-            delta *= 2
+            delta *= -1
         elif dpg.is_key_down(dpg.mvKey_LShift) or dpg.is_key_down(dpg.mvKey_RShift):
             delta *= 10
         cur = self.state["planets"][pid]["levels"][stat]
@@ -2821,6 +3159,7 @@ class App:
         dist = self.base["planets"][pid]["distance"]
         next_vps_pow = self.prefs.get("next_vps_pow",0)
         max_nvps = self.prefs.get("max_nvps",100)
+        rover = ps.get("Rover",False)
         
         gm=global_bonuses["mining"]
         gs=global_bonuses["speed"]
@@ -2835,6 +3174,13 @@ class App:
         mb = probe["m"]*colony["m"]*bm*mm*gm*_get_misc_bonus("planets", pid, "mining", self.state)
         sb = probe["s"]*colony["s"]*bs*ms*gs*_get_misc_bonus("planets", pid, "speed", self.state)
         cb = probe["c"]*colony["c"]*bc*mc*gc*_get_misc_bonus("planets", pid, "cargo", self.state)
+        if rover:
+            if _proj(self.state, "Rover Resupply"):
+                sb *= 2.5
+                cb *= 2.5
+            if _proj(self.state, "Advanced Rover Resupply"):
+                sb *= 2
+                cb *= 2
         #mr = _mining_rate(lvls["mining"],mb) if owned else 0
         mr = _planet_mining_rate(pid, self.base, self.state) if owned else 0
         sp = _ship_speed( lvls["speed"], sb) if owned else 0
@@ -2905,10 +3251,11 @@ class App:
         dpg.set_value(f"pla_{pid}_trans", fmt(ts) if owned else "—")
         if owned:
             dpg.configure_item(f"pla_{pid}_trans", 
-                               color=C_TEAL if ts_min > mr else (C_WARN if ts_max < mr else C_GOLD))
+                               color=C_TEAL if ts_min >= mr else (C_WARN if ts_max <= mr else C_GOLD))
         else:
             dpg.configure_item(f"pla_{pid}_trans", 
                                color=C_MUTED)
+        dpg.set_value(f"pla_{pid}_trans_tt",f"Mining: {mr:.5g}\nSpeed: {sp:.5g}\nCargo: {cg}")
         
         # S.lvl
         dpg.set_value(f"pla_{pid}_speedlvl", ps["levels"]["speed"])
@@ -2935,9 +3282,21 @@ class App:
         dpg.set_value(f"pla_{pid}_cargo_tt", tt_text)
         
         # Cargo
-        dpg.set_value(f"pla_{pid}_cargo", fmt(cg) if owned else "—")
+        cStr = "—"
+        if owned:
+            if cg > 1000:
+                cStr = fmt(cg)
+            else:
+                cStr = f"{cg:.0f}"
+        dpg.set_value(f"pla_{pid}_cargo", cStr)
         dpg.configure_item(f"pla_{pid}_cargo", color=col)
 
+        # Rover
+        dpg.configure_item(f"pla_{pid}_rover",
+                           enabled=_proj(self.state, "Rover Resupply"),
+                           texture_tag="Rover" if rover else "blank"
+                           )
+        
         # Probes
         dpg.configure_item(f"pla_{pid}_probe", 
                            label=_get_probe_string(probe),
