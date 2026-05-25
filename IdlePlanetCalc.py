@@ -97,7 +97,8 @@ def default_state(base: dict) -> dict:
         "projects": {k: {"researched": False}                         for k in base["projects"]},
         "planets":  planets,
         "globals":  {"mining":1.0,"speed":1.0,"cargo":1.0,
-                     "smelt_speed":1.0,"craft_speed":1.0},
+                     "smelt_speed":1.0,"craft_speed":1.0,
+                     "ore_penalty_1":0,"ore_penalty_2":0},
         "smelters": 1,
         "crafters": 1,
         "colonies": [],
@@ -204,14 +205,15 @@ def ore_unlocked(ore: str, base: dict, state: dict) -> bool:
 def ore_mining_rate(ore: str, base: dict, state: dict) -> float:
     total = 0.0
     gm    = global_bonuses["mining"]
+    tt_text = ''
     for pid, ps in state["planets"].items():
         if not ps["owned"]: continue
         pct = base["planets"][pid]["resources"].get(ore, 0)
         if pct == 0: continue
-        lvl   = ps["levels"]["mining"]
-        bonus = ps["probe"]["m"] * ps["colony"]["m"] * gm
-        total += _mining_rate(lvl, bonus) * (pct / 100.0)
-    return total
+        pmr = _planet_mining_rate(pid, base, state) * (pct / 100.0)
+        total += pmr
+        tt_text += f"{pid}: {pmr:.4g}\n"
+    return [total, tt_text]
     
 def _planet_mining_rate(pid: str, base: dict, state: dict) -> float:
     total = 0.0
@@ -242,9 +244,11 @@ def _ore_sell_rate(ore: str, base: dict, state: dict) -> float:
     # Returns the ore_mining_rate minus the amount used on the primary alloy in one smelter
     # Includes a 10% buffer
     # returns as a percentage
-    mr = ore_mining_rate(ore, base, state)
+    mr, mr_tt = ore_mining_rate(ore, base, state)
     if mr == 0:
-        return 0
+        return [0, '']
+    mr *= 1 - (state["globals"].get("ore_penalty_1", 0)/100)
+    mr *= 1 - (state["globals"].get("ore_penalty_2", 0)/100)
     alloy = base["ores"].get(ore,{}).get("alloy","")
     ba = base["alloys"].get(alloy,{})
     smelt_time = ba.get("smelt_time", 60)
@@ -252,7 +256,11 @@ def _ore_sell_rate(ore: str, base: dict, state: dict) -> float:
     smelt_amt = ba.get("recipe",{}).get(ore,0)
     smelt_amt *= global_bonuses.get("smelt_ing", 1)
     smelt_rate = smelt_amt / smelt_time
-    return 90 * (mr - smelt_rate) / mr
+    tt_text = f"Ore supply: {mr:.5g}"
+    tt_text += f"\nSmelt amt: {smelt_amt:.0f}"
+    tt_text += f"\nSmelt time: {smelt_time:.5g}"
+    tt_text += f"\nSmelt rate: {smelt_rate:.5g}"
+    return [100 * (mr - smelt_rate) / mr, tt_text]
     
 def _resource_unlocked(name: str, base: dict, state: dict) -> bool:
     if name in base["ores"].keys():
@@ -347,15 +355,29 @@ def _get_col_string(col: dict):
     cStr += "1/" if s == 1 else f"{s:.2f}/"
     cStr += "1" if c == 1 else f"{c:.2f}"
     return cStr
+
+def _get_recipe(name:str, base:dict, state:dict):
+    gb_lu = {"alloys":"smelt_ing", "items":"craft_cost", "projects":"proj_cost"}
+    for cat in ["alloys","items","projects"]:
+        if name in base[cat]:
+            break
+    base_recipe = base[cat][name]["recipe"]
+    gb = global_bonuses.get(gb_lu[cat])
+    recipe = {}
+    for i,q in base_recipe.items():
+        recipe[i] = max(1, round(q * gb))
+    return recipe
+    
         
 def _get_manufacture_chain(target_product:str, base:dict, state:dict, quantity:int=1):
     items = base["items"]
     alloys = base["alloys"]
+    debug_str = f"_get_manufacture_chain: {target_product} x{quantity}"
     
     # Extract multipliers
     c_speed = global_bonuses.get("craft_speed", 1.0)
     s_speed = global_bonuses.get("smelt_speed", 1.0)
-    c_ing = global_bonuses.get("craft_ing", 1.0)  # e.g., 0.85 for -15%
+    c_ing = global_bonuses.get("craft_cost", 1.0)  # e.g., 0.85 for -15%
     s_ing = global_bonuses.get("smelt_ing", 1.0)
 
     res = {
@@ -370,9 +392,10 @@ def _get_manufacture_chain(target_product:str, base:dict, state:dict, quantity:i
     current_reqs = {target_product: quantity}
     
     # STAGE 1: Process Items (Crafting)
+    debug_str = f"  Stage 1: {current_reqs}"
     while any(name in items for name in current_reqs):
+        res["item_stages"].append({k: v for k, v in current_reqs.items() if k in items})
         next_reqs = {}
-        stage_items = {}
         
         for name, qty in current_reqs.items():
             if name in items:
@@ -385,37 +408,64 @@ def _get_manufacture_chain(target_product:str, base:dict, state:dict, quantity:i
                     # math.ceil is often used if the game doesn't allow partial ingredients
                     total_ing = math.ceil(ing_qty * c_ing) * qty
                     next_reqs[ing] = next_reqs.get(ing, 0) + total_ing
-                    if ing in items:
-                        stage_items[ing] = stage_items.get(ing, 0) + total_ing
             else:
                 next_reqs[name] = next_reqs.get(name, 0) + qty
         
-        if stage_items:
-            res["item_stages"].append(stage_items)
         current_reqs = next_reqs
 
     # STAGE 2: Process Alloys (Smelting)
+    debug_str = f"  Stage 2: {current_reqs}"
     while any(name in alloys for name in current_reqs):
+        debug_str = f"        : {current_reqs}"
         stage_alloys = {k: v for k, v in current_reqs.items() if k in alloys}
         res["alloy_stages"].append(stage_alloys)
         
         next_reqs = {}
         for name, qty in current_reqs.items():
             if name in alloys:
+                debug_str = f"    found {name} in alloys"
                 data = alloys[name]
                 # Apply smelt speed bonus
                 res["smelt_time"] += (data["smelt_time"] / s_speed) * qty
                 
+                debug_str = f"    recipe: {data['recipe']}"
                 for ing, ing_qty in data["recipe"].items():
                     # Apply ingredient reduction bonus
                     total_ing = math.ceil(ing_qty * s_ing) * qty
                     next_reqs[ing] = next_reqs.get(ing, 0) + total_ing
+                    debug_str = f"   ing: {ing}   total_ing: {total_ing}"
             else:
                 res["ore"][name] = res["ore"].get(name, 0) + qty
         current_reqs = next_reqs
+    
+    for name, qty in current_reqs.items():
+        res["ore"][name] = res["ore"].get(name, 0) + qty
 
     return res    
-    
+
+def _add_manufacture_tooltip(parent, name, base, state):
+    with dpg.tooltip(parent):
+        chain = _get_manufacture_chain(name, base, state)
+        dpg.add_text(chain["product"])
+        if len(chain["item_stages"]) > 0:
+            dpg.add_text(f"Craft stages: {fmt_time(chain['craft_time'])}")
+            for stage in chain["item_stages"]:
+                with dpg.group(horizontal=True):
+                    for ing, qty in stage.items():
+                        dpg.add_image(f"Item_{ing}")
+                        dpg.add_text(f"x{fmt(qty)}" if qty >= 1000 else f"x{qty:.0f}")
+        if len(chain["alloy_stages"]) > 0:
+            dpg.add_text(f"Smelt stages: {fmt_time(chain['smelt_time'])}")
+            for stage in chain["alloy_stages"]:
+                with dpg.group(horizontal=True):
+                    for ing, qty in stage.items():
+                        dpg.add_image(f"Alloy_{ing}")
+                        dpg.add_text(f"x{fmt(qty)}" if qty >= 1000 else f"x{qty:.0f}")
+            dpg.add_text("Ore:")
+            with dpg.group(horizontal=True):
+                for ing, qty in chain["ore"].items():
+                    dpg.add_image(f"Ore_{ing}")
+                    dpg.add_text(f"x{fmt(qty)} " if qty >= 1000 else f"x{qty:.0f}")
 
 # ── global bonuses ─────────────────────────────────────────────────────────────
 
@@ -445,9 +495,12 @@ global_bonuses = {
     "prod_boost_speed": 1,
     "prod_boost_dur": 1,
     "rov_scan_time": 1, 
-    "speed": 1,          
+    "speed": 1,  
+    "smelt_ing": 1,    
     "smelt_speed": 1,
-    "proj_cost": 1    
+    "proj_cost": 1,
+    "ore_penalty_1":0,
+    "ore_penalty_2":0    
 }
 gb_descriptions = {
     "alloy_val": "Alloy Value",
@@ -688,23 +741,31 @@ def station_prereq_met(name: str, state, base):
 def analyze(name, cat, base, state):
     e  = base[cat][name]
     ov = effective_price(name, base, state)
+    m_chain = _get_manufacture_chain(name, base, state)
     tk = "smelt_time" if cat=="alloys" else "craft_time"
-    t  = e.get(tk,1)
-    adj_t = t / max(0.001, global_bonuses['smelt_speed'] if cat=="alloys" else global_bonuses['craft_speed'])
-    sm = total_smelt_time(name, cat, base, state)
-    cr = total_craft_time(name, cat, base, state)
+    adj_t = m_chain[tk]
+    sm = m_chain["smelt_time"]
+    cr = m_chain["craft_time"]
     s  = state.get("smelters",1); c = state.get("crafters",1)
     wt = wall_time(sm, cr, s, c)
-    dc = sum(effective_price(i,base,state)*q for i,q in e.get("recipe",{}).items())
-    oc = ore_cost_rec(e.get("recipe",{}), base, state)
+    dc = sum(effective_price(i,base,state)*q for i,q in _get_recipe(name, base, state).items())
+    oc = 0
+    for ore, qty in m_chain["ore"].items():
+        oc += qty * (effective_price(ore, base, state))
     pd = ov - dc; po = ov - oc
     return {"name":name,"category":cat,
             "unlocked":state[cat][name].get("unlocked",False),
-            "output_value":ov,"direct_cost":dc,"ore_cost":oc,
-            "profit_direct":pd,"profit_ore":po,
-            "craft_time":adj_t,"smelt_raw":sm,"craft_raw":cr,"total_time":wt,
-            "vps_output":ov/t if t else 0,
-            "vps_profit_direct":pd/t if t else 0,
+            "output_value":ov,
+            "direct_cost":dc,
+            "ore_cost":oc,
+            "profit_direct":pd,
+            "profit_ore":po,
+            "craft_time":adj_t,
+            "smelt_raw":sm,
+            "craft_raw":cr,
+            "total_time":wt,
+            "vps_output":ov/wt if adj_t else 0,
+            "vps_profit_direct":pd/wt if adj_t else 0,
             "vps_profit_ore":po/wt if wt else 0}
 
 def analyze_all(base, state):
@@ -947,9 +1008,10 @@ def _get_next_lvl_cost(pid:str, lvl:int, base:dict, state:dict) -> float:
     for m_item in state.get("misc_bonuses", []):
         if m_item.get("target_type",'') != "planets": continue
         if m_item.get("target",'') != pid: continue
-        if m_item.get("stat",'') == "pla_unl_price":
-            unl *= m_item.get("bonus",1)
-        elif m_item.get("stat",'') == "pla_upg_price":
+        # pla_unl_price doesn't affect upgrade prices?
+        #if m_item.get("stat",'') == "pla_unl_price":
+        #    unl *= m_item.get("bonus",1)
+        if m_item.get("stat",'') == "pla_upg_price":
             upg_bonus *= m_item.get("bonus",1)
     
     # Colony Tax Incentives
@@ -1574,8 +1636,25 @@ class App:
                         txt = str(v); col = C_TEXT
                     if key == "name":
                         with dpg.group(horizontal=True):
-                            dpg.add_image(img)
-                            dpg.add_text(txt, color=col)
+                            dpg.add_image(img, tag=f"dash_img_{i}")
+                            dpg.add_text(txt, color=col, tag=f"dash_name_{i}")
+                        _add_manufacture_tooltip(f"dash_img_{i}", txt, self.base, self.state)
+                        with dpg.tooltip(f"dash_name_{i}"):
+                            chain = _get_manufacture_chain(txt, self.base, self.state)
+                            dpg.add_text(chain["product"])
+                            dpg.add_text("Craft stages:")
+                            for stage in chain["item_stages"]:
+                                stage_txt = "  " + (", ".join(f"{qty} {ing}" for ing, qty in stage.items()))
+                                dpg.add_text(stage_txt)
+                            dpg.add_text("Smelt stages:")
+                            for stage in chain["alloy_stages"]:
+                                stage_txt = "  " + (", ".join(f"{qty} {ing}" for ing, qty in stage.items()))
+                                dpg.add_text(stage_txt)
+                            dpg.add_text("Ore:")
+                            for ing, qty in chain["ore"].items():
+                                dpg.add_text(f"  {fmt(qty)} {ing}")
+                            dpg.add_text(f"Craft time: {fmt_time(chain['craft_time'])}")
+                            dpg.add_text(f"Smelt time: {fmt_time(chain['smelt_time'])}")
                     elif key == "total_time":
                         dpg.add_text(txt, color=col, tag=f"dash_total_time_{i}")
                         with dpg.tooltip(f"dash_total_time_{i}"):
@@ -1587,6 +1666,26 @@ class App:
 
     # ── ORES ───────────────────────────────────────────────────────────────────
     def _tab_ores(self):
+        with dpg.group(horizontal=True):
+            op1 = self.state["globals"].get("ore_penalty_1", 0)
+            dpg.add_text("Ore penalty 1:")
+            dpg.add_input_text(default_value=f"{op1} %",
+                               tag="ore_penalty_1",
+                               user_data="1",
+                               width=100,
+                               callback=self._cb_ores_penalty)
+            with dpg.tooltip("ore_penalty_1"):
+                dpg.add_text("Hidden penalty between planet output and detail panel\nThis is 10% after planet 12 is unlocked")
+            dpg.add_separator()
+            op2 = self.state["globals"].get("ore_penalty_2", 0)
+            dpg.add_text("Ore penalty 2:")
+            dpg.add_input_text(default_value=f"{op2} %",
+                               tag="ore_penalty_2",
+                               user_data="2",
+                               width=100,
+                               callback=self._cb_ores_penalty)
+            with dpg.tooltip("ore_penalty_2"):
+                dpg.add_text("Hidden penalty between detail panel and inventory")
         with dpg.table(tag="ores_tbl", header_row=True, row_background=True,
                        borders_innerH=True, borders_outerH=True,
                        borders_innerV=True, borders_outerV=True,
@@ -1594,7 +1693,7 @@ class App:
                        policy=dpg.mvTable_SizingFixedFit, freeze_rows=1):
             for lbl, w in [("",28),("Ore",140),("Base $",105),
                             ("Stars",80),("Market",90),("Real $",105),
-                            ("Ore/s",82),("Safe sell rate", 60)]:
+                            ("Ore/s",82),("Display O/s", 82), ("True O/s", 82), ("Safe sell rate", 60)]:
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
 
     def _refresh_ores(self):
@@ -1606,9 +1705,9 @@ class App:
             mkt = st.get("market",0)
             rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
             unl = ore_unlocked(ore, self.base, self.state)
-            ors = ore_mining_rate(ore, self.base, self.state)
+            ors, ors_tt = ore_mining_rate(ore, self.base, self.state)
             ore_img = f"Ore_{ore}"
-            ore_sell_rate = _ore_sell_rate(ore, self.base, self.state)
+            ore_sell_rate, ore_sr_tt = _ore_sell_rate(ore, self.base, self.state)
             with dpg.table_row(parent="ores_tbl"):
                 if unl:
                     dpg.add_image(self._check)
@@ -1628,10 +1727,29 @@ class App:
                 with dpg.group(horizontal=True):
                     self._market_widget(f"mkt_or_{ore}", mkt, ("ores",ore,"market"))
                 dpg.add_text(fmt(rp), tag=f"orp_{ore}", color=C_TEAL)
-                dpg.add_text(f"{ors:.2f}" if ors else "—",
+                dpg.add_text(f"{fmt(ors)}" if ors else "—",
                              tag=f"ors_{ore}", color=C_MUTED)
+                with dpg.tooltip(f"ors_{ore}"):
+                    dpg.add_text(ors_tt)
+                if ors:
+                    orsp1 = ors *(1 - (self.state['globals'].get('ore_penalty_1', 0)/100))
+                    orsp2 = orsp1 * (1 - (self.state["globals"].get("ore_penalty_2", 0)/100))
+                dpg.add_text(f"{fmt(orsp1)}" if ors else "—",
+                             tag=f"orsp1_{ore}", color=C_MUTED)
+                dpg.add_text(f"{fmt(orsp2)}" if ors else "—",
+                             tag=f"orsp2_{ore}", color=C_MUTED)
                 dpg.add_text(f"{ore_sell_rate:.0f} %" if ors else "—",
                              tag=f"ore_{ore}_sell", color=C_MUTED)
+                with dpg.tooltip(f"ore_{ore}_sell"):
+                    dpg.add_text(ore_sr_tt)
+                    
+    def _cb_ores_penalty(self, s, v, ud):
+        try: val = float(v.replace('%', ''))
+        except: return
+        self.state["globals"][f"ore_penalty_{ud}"] = val
+        dpg.set_value(f"ore_penalty_{ud}", f"{val} %")
+        save_state(self.state)
+        self._refresh_all()
 
     # ── ALLOYS ─────────────────────────────────────────────────────────────────
     def _tab_alloys(self):
@@ -1706,7 +1824,8 @@ class App:
                 
                 # "Recipe"
                 with dpg.group(horizontal=True):
-                    for i,q in bd["recipe"].items():
+                    #for i,q in bd["recipe"].items():
+                    for i,q in (_get_recipe(name, self.base, self.state)).items():
                         if i in self.base["ores"]:
                             img_name = f"Ore_{i}"
                         elif i in self.base["alloys"]:
@@ -1716,8 +1835,7 @@ class App:
                         debug_str = f"{i}: '{img_name}'"
                         #print(debug_str)
                         icon = dpg.add_image(img_name)
-                        with dpg.tooltip(icon):
-                            dpg.add_text(i)
+                        _add_manufacture_tooltip(icon, i, self.base, self.state)
                         txt = dpg.add_input_text(default_value=f"x{q}",
                                            readonly=True,
                                            width=60)
@@ -1809,7 +1927,7 @@ class App:
                 
                 # "Recipe"
                 with dpg.group(horizontal=True):
-                    for i,q in bd["recipe"].items():
+                    for i,q in (_get_recipe(name, self.base, self.state)).items():
                         if i in self.base["ores"]:
                             img_name = f"Ore_{i}"
                         elif i in self.base["alloys"]:
@@ -1817,8 +1935,7 @@ class App:
                         else:
                             img_name = f"Item_{i}"
                         icon = dpg.add_image(img_name)
-                        with dpg.tooltip(icon):
-                            dpg.add_text(i)
+                        _add_manufacture_tooltip(icon, i, self.base, self.state)
                         txt = dpg.add_input_text(default_value=f"x{q}",
                                            readonly=True,
                                            width=60)
@@ -1891,7 +2008,7 @@ class App:
                 # No smelting - ore-only recipe
                 wt = 0
                 for i,q in rec.items():
-                    ors = ore_mining_rate(i, self.base, self.state)
+                    ors, ors_tt = ore_mining_rate(i, self.base, self.state)
                     if ors > 0:
                         wt += q/ors
             pre_str = (" OR ".join(pre) if isinstance(pre,list) else pre) or "—"
@@ -1902,7 +2019,9 @@ class App:
                 dpg.add_checkbox(default_value=done, user_data=name,
                                  callback=self._cb_proj_check)
                 # col: Project
-                dpg.add_text(name,    color=col)
+                dpg.add_text(name, color=col, tag=f"proj_name_{name}" )
+                with dpg.tooltip(f"proj_name_{name}"):
+                    dpg.add_text(bd.get("description",""), wrap=200)
                 # col: Cost
                 dpg.add_text(f"$ {fmt(cost)}",color=col)
                 # col: Time
@@ -1924,8 +2043,7 @@ class App:
                         except Exception as e:
                             print(f"Failed to add image: {img_name}")
                             print(f"Exception: {e}")
-                        with dpg.tooltip(icon):
-                            dpg.add_text(i)
+                        _add_manufacture_tooltip(icon, i, self.base, self.state)
                         # apply global bonus: proj_cost   
                         # this is standard rounding, not floor                        
                         q = max(1,round(q * global_bonuses["proj_cost"]))
@@ -2696,13 +2814,13 @@ class App:
             dpg.add_input_text(
                 default_value=f"{val:.2f}",
                 width=58, tag=tag,
-                enabled=active,
+                enabled=True,
                 on_enter=True,
                 user_data=(key, stat),
                 callback=self._cb_beacon_edit)
             dpg.add_button(
                 label="+", width=22,
-                enabled=active,
+                enabled=True,
                 user_data=(key, stat, inc),
                 callback=self._cb_beacon_inc)
 
@@ -2740,6 +2858,25 @@ class App:
                 ("cargo", "Ship Cargo", "gcc","gcm"),
             ]:
                 self._bonus_strip(key, label, tc, tm, self._cb_planet_global)
+            dpg.add_text("Planet Defaults:  M:")
+            dpg.add_input_text(default_value=self.prefs.get("pla_def_mining", 1),
+                               on_enter=True,
+                               width=34,
+                               user_data="mining",
+                               callback=self._cb_planet_default)
+            dpg.add_text("S:")
+            dpg.add_input_text(default_value=self.prefs.get("pla_def_speed", 1),
+                               on_enter=True,
+                               width=34,
+                               user_data="speed",
+                               callback=self._cb_planet_default)
+            dpg.add_text("C:")
+            dpg.add_input_text(default_value=self.prefs.get("pla_def_cargo", 1),
+                               on_enter=True,
+                               width=34,
+                               user_data="cargo",
+                               callback=self._cb_planet_default)
+            
         with dpg.table(tag="planet_tbl", header_row=False, row_background=True,
                        borders_innerH=True, borders_outerH=True,
                        borders_innerV=True, borders_outerV=True,
@@ -3104,7 +3241,9 @@ class App:
         if v:
             lvls = self.state["planets"][pid]["levels"]
             for k in lvls:
-                if lvls[k] == 0: lvls[k] = 1
+                if lvls[k] == 0: 
+                    lvl = int(self.prefs.get(f"pla_def_{k}",1))
+                    lvls[k] = lvl
         else:
             lvls = self.state["planets"][pid]["levels"]
             for k in lvls:
@@ -3148,6 +3287,12 @@ class App:
         self.state["planets"][pid][group][idx] = val
         save_state(self.state)
         self._refresh_all()
+    
+    def _cb_planet_default(self, s, v, ud):
+        pref = f"pla_def_{ud}"
+        self.prefs.update({pref:v})
+        save_prefs(self.prefs)
+        
     
     def _refresh_single_planet(self, pid:str):
         bd = self.base["planets"][pid]
@@ -3466,7 +3611,7 @@ class App:
         if dpg.does_item_exist(star_tag):
             dpg.set_value(star_tag, str(stars) if stars > 0 else "")
         if cat=="ores" and dpg.does_item_exist(f"ors_{name}"):
-            ors = ore_mining_rate(name, self.base, self.state)
+            ors, ors_tt = ore_mining_rate(name, self.base, self.state)
             dpg.set_value(f"ors_{name}", f"{ors:.4f}" if ors else "—")
 
     # ── top-level actions ──────────────────────────────────────────────────────
@@ -3769,7 +3914,7 @@ class App:
         ):
             for lbl, w in [("",120), ("Name",300), 
                 ("Target Type", 140), ("Target", 140),
-                ("Stat", 120), ("Bonus",100)]:  
+                ("Stat", 140), ("Bonus",100)]:  
                 dpg.add_table_column(label=lbl, width_fixed=True, init_width_or_weight=w)
                 
     def _refresh_misc(self):
@@ -3807,6 +3952,7 @@ class App:
                 dpg.add_input_text(default_value=name,
                                    tag=f"misc_name_{idx}",
                                    user_data=idx,
+                                   width=300,
                                    on_enter=True,
                                    callback=self._cb_misc_update_name)
                 
@@ -3821,6 +3967,7 @@ class App:
                 # Target
                 dpg.add_input_text(default_value=target,
                                    tag=f"misc_target_{idx}",
+                                   width=140,
                                    user_data=idx,
                                    on_enter=True,
                                    callback=self._cb_misc_update_target)
