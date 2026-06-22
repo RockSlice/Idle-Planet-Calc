@@ -157,6 +157,8 @@ def load_state(base: dict) -> dict:
 def save_state(state: dict):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
+        
+
 
 # ── prefs ──────────────────────────────────────────────────────────────────────
 _DEF_PREFS = {"dashboard_filter":"All",
@@ -165,7 +167,8 @@ _DEF_PREFS = {"dashboard_filter":"All",
               "projects_show_r":True,
               "projects_show_locked":True,
               "colonies_sort":"planet",
-              "beacons_sort":"level"}
+              "beacons_sort":"level",
+              "lvl_mult":1}
 
 def load_prefs() -> dict:
     if os.path.exists(PREFS_FILE):
@@ -186,9 +189,9 @@ def save_prefs(prefs: dict):
 # ── price (always computed, never cached) ─────────────────────────────────────
 def effective_price(name: str, base: dict, state: dict) -> float:
     stat_lookup = {
-        "ores": "ore_val",
-        "alloys": "alloy_val",
-        "items": "item_val"
+        "ores": ["ore_val"],
+        "alloys": ["alloy_val","alloy_and_item_val"],
+        "items": ["item_val","alloy_and_item_val"]
     }
     for cat in ("ores","alloys","items"):
         if name in base[cat]:
@@ -196,10 +199,12 @@ def effective_price(name: str, base: dict, state: dict) -> float:
             st  = state[cat][name]
             mv  = [0.33,0.5,1,2,3,4,5][st.get("market",0)+2]
             sv  = 1.0 + 0.2 * st.get("stars",0)
-            misc = _get_misc_bonus(cat, name, stat_lookup[cat], state)
-            if cat in ("alloys", "items"):
-                misc *= _get_misc_bonus(cat, name, "alloy_and_item_val", state)
-            return bp * mv * sv * misc
+            misc = 1.0
+            gb = 1.0
+            for stat in stat_lookup[cat]:
+                misc *= _get_misc_bonus(cat, name, stat, state)
+                gb *= global_bonuses[stat]
+            return bp * mv * sv * misc * gb
     return 0.0
     
 def ore_unlocked(ore: str, base: dict, state: dict) -> bool:
@@ -236,6 +241,8 @@ def _planet_mining_rate(pid: str, base: dict, state: dict) -> float:
     mr = _mining_rate(lvls["mining"],mb)
     for i,(ore,pct) in enumerate(base["planets"][pid]["resources"].items()):
         if (_proj(state, "Ore Targeting")) and (i == ore_p):
+            pct += 15
+        if (_proj(state, "Advanced Ore Targeting")) and (i == ore_p):
             pct += 15
         total += mr * pct / 100
     if ps.get("Rover",False):
@@ -300,14 +307,11 @@ def _get_planet_mod_bonus(pid:str, effect:str, base:dict, state:dict) -> float:
         
     for lbl in ["drill","transport","synth","remote"]:
         debug_str += f"\n  Checking module {lbl}"
-        mod_data = state["modules"][lbl]
-        if mod_data["primary"]["effect"] == effect:
-            value = mod_data["primary"]["value"]
-            bonus += value - 1
-            debug_str += f"\n    Adding primary value: {value:.3f}"
-        subs = mod_data.get("subs",{})
+        subs = state["modules"][lbl].get("subs",{})
         for i, sub in enumerate(subs):
             if sub["effect"] != effect:
+                continue
+            if not "cond" in sub:
                 continue
             value = sub["value"] - 1
             debug_str += f"\n    sub-effect value: {value:.3f}"
@@ -326,7 +330,7 @@ def _get_planet_mod_bonus(pid:str, effect:str, base:dict, state:dict) -> float:
                         if base["planets"].get(key,{}).get("telescope") == t
                     }
                 else:
-                    planet_scope = state["planets"]
+                    planet_scope = {}
                 
                 cond_count = sum(path_map[cond_per](p) for p in planet_scope.values())
                 value *= cond_count
@@ -334,7 +338,7 @@ def _get_planet_mod_bonus(pid:str, effect:str, base:dict, state:dict) -> float:
                 debug_str += f"  Total: {value:.3f}"
             bonus += value
     debug_str += f"\n  Final bonus: {bonus + 1:.3f}"
-    print(debug_str)
+    #print(debug_str)
     
     return bonus + 1
                 
@@ -549,7 +553,7 @@ global_bonuses = {
     "cargo": 1,       
     "cash_windfall": 1,
     "col_cost": 1,
-    "colonizing_bonus": 1,
+    "col_bonus": 1,
     "craft_speed": 1,
     "craft_ing": 1,
     "credits": 1,         
@@ -581,7 +585,10 @@ gb_descriptions = {
     "cargo": "Cargo",       
     "cash_windfall": "Cash Windfall",
     "col_cost": "Colonization Cost",
-    "colonizing_bonus": "Colonizing Bonuses",
+    "col_bonus": "Colonizing Bonuses",
+    "col_bonus_mining": "Mining Colony Bonus",
+    "col_bonus_speed": "Speed Colony Bonus",
+    "col_bonus_cargo": "Cargo Colony Bonus",
     "craft_speed": "Craft Speed",
     "craft_ing": "Craft Cost",
     "credits": "Credits",         
@@ -600,9 +607,7 @@ gb_descriptions = {
     "speed": "Ship Speed",          
     "smelt_speed": "Smelt Speed",
     "smelt_ing": "Decrease Smelter Ingredients"  ,
-    "col_bonus_mining": "Mining Colony Bonus",
     "speed_and_cargo": "Ship Speed & Cargo",
-    "cargo_telescope": "Cargo, in a Telescope",
     "smelt_and_craft": "Smelt & Craft Speed",
     "__": "__"    
 }
@@ -672,6 +677,25 @@ def calculate_global_bonuses(base, state):
         debug_str = f"  Station : Multiplying bonus '{stat}' by {bonus}"
         #print(debug_str)
 
+    # Module Bonus
+    bonus = 0
+    mod_bonuses = {}
+    for lbl in ["drill","transport","synth","remote"]:
+        mod_data = state.get("modules",{}).get(lbl,{})
+        stat = mod_data.get("primary",{}).get("effect",False)
+        if stat:
+            mod_bonuses[stat] = mod_bonuses.get(stat,0) + mod_data["primary"]["value"] - 1
+        for i, sub in enumerate(mod_data.get("subs",[])):
+            stat = sub["effect"]
+            if "cond" in sub:
+                if sub["cond"]["scope"] != "global":
+                    continue
+                # need to call a function to count whatever the per is
+            else:
+                mod_bonuses[stat] = mod_bonuses.get(stat,0) + sub["value"] - 1
+    for stat, bonus in mod_bonuses.items():
+        global_bonuses[stat] = global_bonuses.get(stat,1) * (1 + bonus)
+    
     # Misc bonus
     for m_item in state.get("misc_bonuses", []):
         if m_item["target_type"] != "global": continue
@@ -679,8 +703,112 @@ def calculate_global_bonuses(base, state):
         if stat == '__': continue
         bonus = m_item["bonus"]
         global_bonuses[stat] *= bonus
-    
+
+bonus_cache = {
+                 "planets":{}
+               }    
         
+def _refresh_bonus_cache(state:dict, base:dict):
+    mgr_sec = {
+            "mining": manager_secondary_bonus("mining", state),
+            "speed": manager_secondary_bonus("speed", state),
+            "cargo": manager_secondary_bonus("cargo", state)
+            }
+    misc_global = {
+            "mining": _get_misc_bonus("global", "", "mining", state),
+            "speed": _get_misc_bonus("global", "", "speed", state),
+            "cargo": _get_misc_bonus("global", "", "cargo", state),
+            "col_cost": _get_misc_bonus("global", "", "col_cost", state),
+            "col_bonus": _get_misc_bonus("global", "", "col_bonus", state),
+            "pla_upg_price": _get_misc_bonus("global", "", "pla_upg_price", state)
+            }
+    
+    for pid, bd in base["planets"]:
+        ps = state["planets"][pid]
+        pcache = {
+            "mining": mgr_sec["mining"] * misc_global["mining"],
+            "speed": mgr_sec["speed"] * misc_global["speed"],
+            "cargo": mgr_sec["cargo"] * misc_global["cargo"],
+            "col_cost": misc_global["col_cost"],
+            "col_bonus": misc_global["col_bonus"],
+            "pla_upg_price": misc_global["pla_upg_price"]
+            }
+        probe = ps.get("probe",{"m":1,"s":1,"c":1})
+        
+        colony = ps.get("colony",{"lvl":0,"m":1,"s":1,"c":1})
+        
+        rover = 1
+        if ps.get("Rover",False):
+            if _proj(state, "Rover Resupply"):
+                rover *= 2.5
+            if _proj(state, "Advanced Rover Resupply"):
+                rover *= 2
+        
+        mgr_pri = {
+            "m": manager_primary_bonus(pid, "mining", state),
+            "s": manager_primary_bonus(pid, "speed", state),
+            "c": manager_primary_bonus(pid, "cargo", state)
+            }
+            
+        beacon = {
+            "m": beacon_bonus(pid, "mining",base, state),
+            "s": beacon_bonus(pid, "speed",base, state),
+            "c": beacon_bonus(pid, "cargo",base, state)
+            }  
+            
+        pcache["mining"] *= probe["m"] * colony["m"] * mgr_pri["m"] * beacon["m"] * rover
+        pcache["speed"]  *= probe["s"] * colony["s"] * mgr_pri["s"] * beacon["s"] * rover
+        pcache["cargo"]  *= probe["c"] * colony["c"] * mgr_pri["c"] * beacon["c"] * rover
+        
+        rooms = {
+            "mining": room_bonus("mining", base, state),
+            "speed": room_bonus("speed", base, state),
+            "cargo": room_bonus("cargo", base, state),
+            "col_cost": room_bonus("col_cost", base, state),
+            "col_bonus": room_bonus("col_bonus", base, state),
+            "pla_upg_price": room_bonus("pla_upg_price", base, state),
+            }
+        for stat, v in rooms.items():
+            pcache[stat] *= v
+        
+        if _proj(state, "Superior Mining"):
+            pcache["mining"] *= 1.5
+        elif _proj(state, "Advanced Mining"):
+            pcache["mining"] *= 1.25
+            
+        if _proj(state, "Superior Thrusters"):
+            pcache["speed"] *= 1.5
+        elif _proj(state, "Advanced Thrusters"):
+            pcache["speed"] *= 1.25
+            
+        if _proj(state, "Superior Cargo Handling"):
+            pcache["cargo"] *= 1.5
+        elif _proj(state, "Advanced Cargo Handling"):
+            pcache["cargo"] *= 1.25
+        
+        if _proj(state, "Colony Superior Tax Incentives"):
+            pcache["pla_upg_price"] *= 0.85 ** colony["lvl"]
+        elif _proj(state, "Colony Advanced Tax Incentives"):
+            pcache["pla_upg_price"] *= 0.90 ** colony["lvl"]
+        elif _proj(state, "Colony  Tax Incentives"):
+            pcache["pla_upg_price"] *= 0.95 ** colony["lvl"]
+        
+        if _proj(state, "Colonization Superior Efficiency"):
+            pcache["col_cost"] *= 0.4
+        elif _proj(state, "Colonization Advanced Efficiency"):
+            pcache["col_cost"] *= 0.6
+        elif _proj(state, "Colonization Efficiency"):
+            pcache["col_cost"] *= 0.8
+            
+        for stat, v in pcache:
+            pcache[stat] *= _get_misc_bonus("planets", pid, stat, state)
+            pcache[stat] *= _get_planet_mod_bonus(pid, stat, base, state)
+        
+        bonus_cache["planets"].update({pid: pcache.copy()})
+        
+        
+        
+
 def _get_misc_bonus(target_type: str, target: str, stat: str, state:dict):
     total = 1
     debug_str = f"{target_type}; {target}; {stat}"
@@ -1090,7 +1218,7 @@ def _find_equilibrium_candidates(pid: str, state: dict, base: dict, under: bool 
 
     return result
     
-def _get_next_lvl_cost(pid:str, lvl:int, base:dict, state:dict, prefs:dict) -> float:
+def _get_next_lvl_cost(pid:str, lvl:int, base:dict, state:dict, prefs:dict, n_lvls:int=1) -> float:
     # price is the same regardless of the type of upgrade
     # for lvl 0, we will be calculating price to lvl 9
     unl = base["planets"].get(pid,{}).get("base_price",100)
@@ -1100,9 +1228,6 @@ def _get_next_lvl_cost(pid:str, lvl:int, base:dict, state:dict, prefs:dict) -> f
     for m_item in state.get("misc_bonuses", []):
         if m_item.get("target_type",'') != "planets": continue
         if m_item.get("target",'') != pid: continue
-        # pla_unl_price doesn't affect upgrade prices?
-        #if m_item.get("stat",'') == "pla_unl_price":
-        #    unl *= m_item.get("bonus",1)
         if m_item.get("stat",'') == "pla_upg_price":
             upg_bonus *= m_item.get("bonus",1)
     
@@ -1117,7 +1242,6 @@ def _get_next_lvl_cost(pid:str, lvl:int, base:dict, state:dict, prefs:dict) -> f
     
     # formula for each level (to level+1) is:
     # (unl/20) * (1.3 ^ (lvl - 1))
-    # for getting to lvl 9, we can precompute the series
     
     if lvl == 0:
         def_m = int(prefs.get('pla_def_mining',1))
@@ -1131,29 +1255,26 @@ def _get_next_lvl_cost(pid:str, lvl:int, base:dict, state:dict, prefs:dict) -> f
             upgrade_price += upg_bonus * (unl/20) * (1.3 ** (i-1))
         for i in range(1,def_c):
             upgrade_price += upg_bonus * (unl/20) * (1.3 ** (i-1))
+        return upgrade_price
         
-    else:
-        upgrade_price = upg_bonus * (unl/20) * (1.3 ** (lvl - 1))
-    return upgrade_price
+    total = 0.0
+    for i in range(n_lvls):
+        total += upg_bonus * (unl/20) * (1.3 ** (lvl + i - 1))
+    return total
     
             
 
-def get_next_vps_per(pid: str, level: int, vps: float, base: dict, state: dict, prefs:dict) -> float:
+def get_next_vps_per(pid: str, level: int, vps: float, base: dict, state: dict, prefs:dict, n_lvls:int=1) -> float:
     bp = base["planets"][pid]["base_price"]
-    l1 = level - 1
-    l2 = level - 2
     next_vps = 0
     if level == 0:
-        # Non-owned: amortized VPS/$ if bought and upgraded to level 9.
-        # Peak level is always 9 regardless of ore prices (cost/rate curve property).
-        # Total cost = bp + sum of upgrade costs for levels 1..8
         total_cost = _get_next_lvl_cost(pid, 0, base, state, prefs)
         #total_cost = bp + sum((bp/20) * (1.3**l) for l in range(8))
         return get_vps(pid, state, base, 9) / total_cost
     else:
         # Owned: marginal VPS/$ of the next mining level upgrade.
-        next_cost = _get_next_lvl_cost(pid, level, base, state, prefs)
-        next_vps  = get_vps(pid, state, base, level + 1) - get_vps(pid, state, base, level)
+        next_cost = _get_next_lvl_cost(pid, level, base, state, prefs, n_lvls)
+        next_vps  = get_vps(pid, state, base, level + n_lvls) - get_vps(pid, state, base, level)
         return next_vps / next_cost
 
 
@@ -1629,7 +1750,7 @@ class App:
     def _bonus_strip(self, key, label, tag_comp, tag_manual, cb):
         dpg.add_text(f"{label}:", color=C_MUTED)
         dpg.add_text(f"×{global_bonuses[key]:.3f}", color=C_TEAL, tag=tag_comp)
-        dpg.add_text(" Manual:", color=C_MUTED)
+        dpg.add_text(" x", color=C_MUTED)
         dpg.add_input_text(default_value=str(self.state["globals"][key]),
                            width=58, tag=tag_manual, on_enter=True,
                            user_data=key, callback=cb)
@@ -1906,7 +2027,8 @@ class App:
         for name, bd in self.base["alloys"].items():
             st = self.state["alloys"][name]
             bp = bd["base_price"]; stars = st.get("stars",0); mkt = st.get("market",0)
-            rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
+            debug_str = f"Alloy {name}: base: {fmt(bp)}"
+            rp = effective_price(name, self.base, self.state)
             unl = st.get("unlocked",False)
             at  = bd["smelt_time"] / ss
             rec = ", ".join(f"{q:g}×{i}" for i,q in bd["recipe"].items())
@@ -1996,7 +2118,7 @@ class App:
         for name, bd in self.base["items"].items():
             st = self.state["items"][name]
             bp = bd["base_price"]; stars = st.get("stars",0); mkt = st.get("market",0)
-            rp = bp * [0.33,0.5,1,2,3,4,5][mkt+2] * (1+0.2*stars)
+            rp = effective_price(name, self.base, self.state)
             unl = st.get("unlocked",False)
             at  = bd["craft_time"] / cs
             rec = ", ".join(f"{q:g}×{i}" for i,q in bd["recipe"].items())
@@ -3013,9 +3135,9 @@ class App:
     def _tab_planets(self):
         with dpg.group(horizontal=True):
             for key, label, tc, tm in [
-                ("mining","Mining Rate","gmc","gmm"),
-                ("speed", "Ship Speed", "gsc","gsm"),
-                ("cargo", "Ship Cargo", "gcc","gcm"),
+                ("mining","M:","gmc","gmm"),
+                ("speed", "S:", "gsc","gsm"),
+                ("cargo", "C:", "gcc","gcm"),
             ]:
                 self._bonus_strip(key, label, tc, tm, self._cb_planet_global)
             dpg.add_text("Planet Defaults:  M:")
@@ -3036,6 +3158,26 @@ class App:
                                width=34,
                                user_data="cargo",
                                callback=self._cb_planet_default)
+            
+            dpg.add_spacer(width=20)
+            dpg.add_text("lvl x:")
+            dpg.add_input_text(default_value=self.prefs.get("lvl_mult",1),
+                               on_enter=True,
+                               tag="lvl_mult",
+                               width=34,
+                               callback=self._cb_planet_lvl_mult)
+            dpg.add_button(label="1", 
+                           width=28,
+                           user_data=1,
+                           callback=self._cb_planet_lvl_mult_btn)
+            dpg.add_button(label="5", 
+                           width=28,
+                           user_data=5,
+                           callback=self._cb_planet_lvl_mult_btn)
+            dpg.add_button(label="10", 
+                           width=28,
+                           user_data=10,
+                           callback=self._cb_planet_lvl_mult_btn)
             
         with dpg.table(tag="planet_tbl", header_row=False, row_background=True,
                        borders_innerH=True, borders_outerH=True,
@@ -3115,7 +3257,7 @@ class App:
                                        callback=self._cb_planet_lvl_edit)
                     dpg.add_button(label="+",
                                    width=16,
-                                   user_data=(pid,stat,1),
+                                   user_data=(pid,stat),
                                    callback=self._cb_planet_lvl,
                                    tag=f"pla_{pid}_{stat}lvl_btn")
 
@@ -3231,6 +3373,18 @@ class App:
                                      color=col,
                                      tag=f"pla_{pid}_ore{i}_text")
     
+    def _cb_planet_lvl_mult(self, s, v):
+        m = int(v)
+        self.prefs.update({"lvl_mult":m})
+        save_prefs(self.prefs)
+        self._refresh_all()
+
+    def _cb_planet_lvl_mult_btn(self, s, v, ud):
+        dpg.set_value("lvl_mult", ud)
+        self.prefs.update({"lvl_mult":ud})
+        save_prefs(self.prefs)
+        self._refresh_all()
+    
     def _cb_planet_rover(self, s, v, ud):
         pid = ud
         ps = self.state["planets"].get(pid,{})
@@ -3317,6 +3471,9 @@ class App:
         s = colony.get("s",0)
         c = colony.get("c",0)
         name = pb.get("name","")
+        mDelta = 0.3 * (global_bonuses["col_bonus"])
+        sDelta = 0.3 * (global_bonuses["col_bonus"])
+        cDelta = 0.3 * (global_bonuses["col_bonus"])
         
         def _cb_pla_col_apply(sender):
             lvl = dpg.get_value("pla_col_dlg_lvl")
@@ -3358,6 +3515,7 @@ class App:
                     dpg.add_input_float(default_value=m,
                                         on_enter=True,
                                         width=115,
+                                        step=mDelta,
                                         tag="pla_col_dlg_m")
                 with dpg.table_row():
                     t = dpg.add_selectable(label="Ship Speed: ")
@@ -3365,6 +3523,7 @@ class App:
                     dpg.add_input_float(default_value=s,
                                         on_enter=True,
                                         width=115,
+                                        step=sDelta,
                                         tag="pla_col_dlg_s")
                 with dpg.table_row():
                     t = dpg.add_selectable(label="Cargo: ")
@@ -3372,6 +3531,7 @@ class App:
                     dpg.add_input_float(default_value=c,
                                         on_enter=True,
                                         width=115,
+                                        step=cDelta,
                                         tag="pla_col_dlg_c")
             dpg.add_button(label="Apply",callback=_cb_pla_col_apply)   
                                  
@@ -3412,7 +3572,8 @@ class App:
         self._refresh_all()
 
     def _cb_planet_lvl(self, s, v, ud):
-        pid, stat, delta = ud
+        pid, stat = ud
+        delta = self.prefs.get("lvl_mult",1)
         if dpg.is_key_down(dpg.mvKey_LAlt):
             candidates = _find_equilibrium_candidates(pid, self.state, self.base)
             print(f"{pid}:{self.base['planets'][pid]['name']} next over candidates:")
@@ -3466,6 +3627,7 @@ class App:
         next_vps_pow = self.prefs.get("next_vps_pow",0)
         max_nvps = self.prefs.get("max_nvps",100)
         rover = ps.get("Rover",False)
+        lvl_mult = self.prefs.get("lvl_mult",1)
         
         gm=global_bonuses["mining"]
         gs=global_bonuses["speed"]
@@ -3482,7 +3644,7 @@ class App:
             mod_s = _get_planet_mod_bonus(pid, "speed", self.base, self.state)
             mod_c = _get_planet_mod_bonus(pid, "cargo", self.base, self.state)
             debug_str = f"Planet {pid}: m:{mod_m}  s:{mod_s}  c:{mod_c}"
-            print(debug_str)
+            #print(debug_str)
         else:
             mod_m = 1;mod_s = 1;mod_c = 1
         mb = probe["m"]*colony["m"]*bm*mm*gm*mod_m*_get_misc_bonus("planets", pid, "mining", self.state)
@@ -3538,7 +3700,7 @@ class App:
         dpg.configure_item(f"pla_{pid}_vps", color=col)
         
         # NVPS/$
-        next_vps = get_next_vps_per(pid, lvls["mining"], vps, self.base, self.state, self.prefs)
+        next_vps = get_next_vps_per(pid, lvls["mining"], vps, self.base, self.state, self.prefs, lvl_mult)
         nvc = min(255, int(255 * next_vps / max_nvps))
         dpg.set_value(f"pla_{pid}_nvps", f"{next_vps/ (10**next_vps_pow):.2f}")
         dpg.configure_item(f"pla_{pid}_nvps", color=(nvc,nvc,nvc,255) if next_vps < 0.9*max_nvps else (200,255,200,255))
@@ -3548,7 +3710,7 @@ class App:
         dpg.configure_item(f"pla_{pid}_mininglvl", enabled=owned)
         dpg.configure_item(f"pla_{pid}_mininglvl_btn", enabled=owned)
         if owned:
-            tt_text = f"Upgrade cost: $ {fmt(_get_next_lvl_cost(pid, lvls['mining'], self.base, self.state, self.prefs))}"
+            tt_text = f"x{lvl_mult} upgrade cost: $ {fmt(_get_next_lvl_cost(pid, lvls['mining'], self.base, self.state, self.prefs, lvl_mult))}"
         else:
             tt_text = f"Cost to lvl {self.prefs.get('pla_def_mining',1)}/{self.prefs.get('pla_def_speed',1)}/{self.prefs.get('pla_def_cargo',1)}: $ {fmt(_get_next_lvl_cost(pid, lvls['mining'], self.base, self.state, self.prefs))}"
         dpg.set_value(f"pla_{pid}_mining_tt", tt_text)
@@ -3576,7 +3738,7 @@ class App:
         dpg.configure_item(f"pla_{pid}_speedlvl", enabled=owned)
         dpg.configure_item(f"pla_{pid}_speedlvl_btn", enabled=owned)
         if owned:
-            tt_text = f"Upgrade cost: $ {fmt(_get_next_lvl_cost(pid, lvls['speed'], self.base, self.state, self.prefs))}"
+            tt_text = f"x{lvl_mult} upgrade cost: $ {fmt(_get_next_lvl_cost(pid, lvls['speed'], self.base, self.state, self.prefs, lvl_mult))}"
         else:
             tt_text = f"Cost to lvl 9: $ {fmt(_get_next_lvl_cost(pid, lvls['speed'], self.base, self.state, self.prefs))}"
         dpg.set_value(f"pla_{pid}_speed_tt", tt_text)
@@ -3590,7 +3752,7 @@ class App:
         dpg.configure_item(f"pla_{pid}_cargolvl", enabled=owned)
         dpg.configure_item(f"pla_{pid}_cargolvl_btn", enabled=owned)
         if owned:
-            tt_text = f"Upgrade cost: $ {fmt(_get_next_lvl_cost(pid, lvls['cargo'], self.base, self.state, self.prefs))}"
+            tt_text = f"x{lvl_mult} upgrade cost: $ {fmt(_get_next_lvl_cost(pid, lvls['cargo'], self.base, self.state, self.prefs, lvl_mult))}"
         else:
             tt_text = f"Cost to lvl 9: $ {fmt(_get_next_lvl_cost(pid, lvls['cargo'], self.base, self.state, self.prefs))}"
         dpg.set_value(f"pla_{pid}_cargo_tt", tt_text)
@@ -3646,13 +3808,15 @@ class App:
     def _refresh_planets(self):
         # find the maximum next_vps, for number shading
         max_nvps = 0
+        lvl_mult = self.prefs.get("lvl_mult",1)
+
         for pid, bd in self.base["planets"].items():
             ps = self.state["planets"][pid]
             if not ps["owned"]:
                 continue
             lvl = ps["levels"]["mining"]
             vps = get_vps(pid, self.state, self.base)
-            nvps = get_next_vps_per(pid, lvl, vps, self.base, self.state, self.prefs)
+            nvps = get_next_vps_per(pid, lvl, vps, self.base, self.state, self.prefs, lvl_mult)
             if nvps > max_nvps:
                 max_nvps = nvps
         self.prefs.update({"max_nvps": max_nvps})
@@ -3814,14 +3978,14 @@ class App:
                     new_state[cat][n]["stars"] = self.state[cat][n]["stars"]
             
             # Copy over states that don't get reset
-            for cat in ("globals", "beacons", "rooms", "station", "misc_bonuses"):
+            for cat in ("globals", "beacons", "rooms", "station", "modules", "misc_bonuses"):
                 new_state[cat] = self.state[cat].copy()
                 
             # Copy managers over (without planet assignments)
             for mgr in self.state["managers"]:
                 mgr["planet"] = ""
                 new_state["managers"].append(mgr.copy())
-                
+                                
             # Reload base data
             self.base = load_base()
             
